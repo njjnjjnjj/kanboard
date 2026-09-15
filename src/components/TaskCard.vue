@@ -65,8 +65,8 @@ function selectFromKeyboard(event: KeyboardEvent) {
         </svg>
       </button>
       <h3>{{ task.title }}</h3>
-      <span class="task-card__grip" aria-hidden="true" title="按住拖动任务">⠿</span>
     </div>
+    <p v-if="task.description" class="task-card__description">{{ task.description }}</p>
     <div v-if="task.dueDate || task.priority === 'high'" class="task-card__meta">
       <time
         v-if="task.dueDate"
