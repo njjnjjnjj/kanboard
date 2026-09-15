@@ -83,7 +83,7 @@ function submitWithShortcut(event: KeyboardEvent) {
 
       <label class="field field--title">
         <span>任务标题</span>
-        <textarea data-inspector-title v-model="draft.title" rows="3" maxlength="160" autofocus />
+        <textarea data-inspector-title v-model="draft.title" rows="3" maxlength="160" />
       </label>
 
       <div class="field-grid field-grid--primary">
@@ -108,7 +108,12 @@ function submitWithShortcut(event: KeyboardEvent) {
 
       <label class="field field--description">
         <span>任务说明</span>
-        <textarea v-model="draft.description" rows="8" placeholder="记录背景、下一步或需要注意的信息" />
+        <textarea
+          data-inspector-description
+          v-model="draft.description"
+          rows="8"
+          placeholder="记录背景、下一步或需要注意的信息"
+        />
       </label>
 
       <footer class="task-inspector__actions">

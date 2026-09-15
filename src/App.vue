@@ -76,7 +76,8 @@ async function addTask() {
     quickTitle.value = "";
     selectedTaskId.value = task.id;
     await nextTick();
-    document.querySelector<HTMLTextAreaElement>("[data-inspector-title]")?.focus();
+    // 标题来自快速添加，所以焦点落在还没填的“任务说明”上，可以直接接着写
+    document.querySelector<HTMLTextAreaElement>("[data-inspector-description]")?.focus();
     announce("已添加到待处理");
   } catch (error) {
     console.error(error);

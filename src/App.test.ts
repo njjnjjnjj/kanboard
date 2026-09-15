@@ -62,7 +62,7 @@ describe("personal task wall", () => {
     expect(repository.createTask).toHaveBeenCalledWith("准备每周回顾", "todo");
     expect(wrapper.text()).toContain("准备每周回顾");
     expect(wrapper.text()).toContain("任务详情");
-    expect(document.activeElement).toBe(wrapper.get("[data-inspector-title]").element);
+    expect(document.activeElement).toBe(wrapper.get("[data-inspector-description]").element);
     expect(wrapper.find("select").exists()).toBe(false);
     wrapper.unmount();
   });
