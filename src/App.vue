@@ -9,6 +9,8 @@ import {
   saveTaskOrder,
   updateTask,
 } from "./data/taskRepository";
+import { restoreDraggedCardToOrigin, type DragOrigin } from "./drag/dragPlaceholder";
+import { dragPointFrom, isPointInDragTrash } from "./drag/trashDropZone";
 import type { Task, TaskChanges, TaskColumn } from "./types";
 
 const columns = ref<TaskColumn[]>([]);
@@ -19,6 +21,9 @@ const loading = ref(true);
 const saving = ref(false);
 const errorMessage = ref("");
 const statusMessage = ref("");
+const draggingTask = ref(false);
+const trashActive = ref(false);
+const dragOrigin = ref<DragOrigin | null>(null);
 
 let orderQueue = Promise.resolve();
 let statusTimer: number | undefined;
@@ -70,6 +75,8 @@ async function addTask() {
     target.tasks.push(task);
     quickTitle.value = "";
     selectedTaskId.value = task.id;
+    await nextTick();
+    document.querySelector<HTMLTextAreaElement>("[data-inspector-title]")?.focus();
     announce("已添加到待处理");
   } catch (error) {
     console.error(error);
@@ -156,18 +163,65 @@ async function toggleTask(task: Task) {
 }
 
 async function removeTask(taskId: string) {
+  const task = findTask(taskId);
+  if (!task) return;
+
   saving.value = true;
+  // Detach from the wall first: a drop on the delete zone may already have been
+  // committed into whichever column the pointer last hovered, and that card must
+  // never be painted in a column while the delete is still in flight.
+  removeTaskFromWall(taskId);
+  if (selectedTaskId.value === taskId) selectedTaskId.value = null;
+
   try {
     await deleteTask(taskId);
-    removeTaskFromWall(taskId);
-    selectedTaskId.value = null;
     announce("任务已删除");
   } catch (error) {
     console.error(error);
     announce("删除失败，请重试");
+    await load();
   } finally {
     saving.value = false;
   }
+}
+
+/** Only real pointer coordinates decide whether a drag ended on the delete zone. */
+function trackTrashPointer(event: MouseEvent | TouchEvent) {
+  const over = isPointInDragTrash(dragPointFrom(event));
+  trashActive.value = over;
+  // While the pointer is on "delete" the card belongs to no column: keep it on the
+  // slot it came from instead of the column the pointer last hovered.
+  if (over) restoreDraggedCardToOrigin(dragOrigin.value);
+}
+
+function stopTrashTracking() {
+  window.removeEventListener("mousemove", trackTrashPointer, true);
+  window.removeEventListener("touchmove", trackTrashPointer, true);
+  trashActive.value = false;
+  dragOrigin.value = null;
+}
+
+function startTrashTracking() {
+  window.addEventListener("mousemove", trackTrashPointer, true);
+  window.addEventListener("touchmove", trackTrashPointer, true);
+}
+
+function beginTaskDrag(columnId: string, origin: { taskId: string; index: number }) {
+  dragOrigin.value = { columnId, taskId: origin.taskId, index: origin.index };
+  draggingTask.value = true;
+  startTrashTracking();
+}
+
+async function handleTaskDrop(result: { taskId: string; intoTrash: boolean }) {
+  draggingTask.value = false;
+  stopTrashTracking();
+  if (!result.intoTrash) {
+    queueOrderSave();
+    return;
+  }
+  // Deleting is decided here and nowhere else, so a card released over the
+  // delete zone can never stay behind in the column beneath it.
+  if (result.taskId) await removeTask(result.taskId);
 }
 
 function selectRelativeTask(offset: number) {
@@ -210,6 +264,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  stopTrashTracking();
   window.removeEventListener("keydown", handleGlobalKeydown);
   window.clearTimeout(statusTimer);
 });
@@ -218,15 +273,13 @@ onBeforeUnmount(() => {
 <template>
   <div class="app-shell">
     <header class="app-header">
-      <div class="wordmark" aria-label="本地板">
-        <span class="wordmark__mark" aria-hidden="true"><i /><i /><i /><i /></span>
-        <span>本地板</span>
-      </div>
       <div class="wall-heading">
-        <h1>我的任务墙</h1>
+        <span class="wall-heading__mark" aria-hidden="true" />
+        <h1>任务墙</h1>
         <span>{{ openTaskCount }} 项未完成</span>
       </div>
       <form class="quick-add" @submit.prevent="addTask">
+        <span class="quick-add__mark" aria-hidden="true">＋</span>
         <input
           ref="quickInput"
           v-model="quickTitle"
@@ -234,10 +287,11 @@ onBeforeUnmount(() => {
           maxlength="160"
           autocomplete="off"
           aria-label="新任务标题"
-          placeholder="快速添加待办…"
+          placeholder="记下一件事，回车加入待处理"
         />
-        <button class="primary-button" type="submit" :disabled="saving || !quickTitle.trim()">添加</button>
+        <button class="primary-button" type="submit" :disabled="saving || !quickTitle.trim()">添加任务</button>
       </form>
+      <div class="capture-shortcut" aria-hidden="true"><kbd>N</kbd><span>快速记录</span></div>
     </header>
 
     <div v-if="loading" class="system-state" role="status">正在打开本地任务墙…</div>
@@ -246,7 +300,11 @@ onBeforeUnmount(() => {
       <button class="secondary-button" type="button" @click="load">重试</button>
     </div>
     <main v-else class="wall-workspace">
-      <div class="board-columns" aria-label="个人任务墙">
+      <div
+        class="board-columns"
+        :class="{ 'board-columns--trash-target': trashActive }"
+        aria-label="个人任务墙"
+      >
         <BoardColumn
           v-for="column in columns"
           :key="column.id"
@@ -255,8 +313,21 @@ onBeforeUnmount(() => {
           @select="selectedTaskId = $event"
           @toggle="toggleTask"
           @update-tasks="updateColumnTasks"
-          @reorder="queueOrderSave"
+          @task-drop="handleTaskDrop"
+          @drag-start="beginTaskDrag(column.id, $event)"
         />
+        <div
+          class="drag-trash"
+          :class="{ 'drag-trash--visible': draggingTask, 'drag-trash--active': trashActive }"
+          data-drag-trash
+          :aria-hidden="!draggingTask"
+          aria-label="拖到这里删除任务"
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M3.5 5.5h13M8 3.5h4M6 5.5l.6 11h6.8l.6-11M8.2 8.2v5.5M11.8 8.2v5.5" />
+          </svg>
+          <span>拖到这里删除</span>
+        </div>
       </div>
       <TaskInspector
         :task="selectedTask"
@@ -268,7 +339,6 @@ onBeforeUnmount(() => {
       />
     </main>
 
-    <div class="keyboard-hint" aria-hidden="true"><kbd>N</kbd> 新建 <kbd>↑↓</kbd> 浏览 <kbd>Esc</kbd> 关闭详情</div>
     <div class="sr-status" role="status" aria-live="polite">{{ statusMessage }}</div>
     <Transition name="toast">
       <div v-if="statusMessage" class="toast-message">{{ statusMessage }}</div>
