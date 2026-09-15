@@ -70,10 +70,13 @@ button:disabled { cursor: not-allowed; opacity: .46; }
   box-shadow: 0 1px 0 rgba(255, 255, 255, .68) inset;
 }
 
+/* 顶部一行（标题 / 快速添加 / 快捷键提示）共用同一条光学中线：
+   行盒居中会让中文墨迹比盒子几何中线低约 1px，所以在每个文字盒子底部补 1~2px，
+   把内容整体顶上去，落回与左侧色条、输入框图标同一条线上。 */
 .wall-heading { display: flex; align-items: center; gap: 9px; min-width: 0; height: 43px; }
 .wall-heading__mark { width: 4px; height: 24px; flex: 0 0 auto; border-radius: 2px; background: var(--accent); }
-.wall-heading h1 { margin: 0; font-size: 20px; font-weight: 720; line-height: 1.1; letter-spacing: -.035em; }
-.wall-heading > span:last-child { margin-left: 2px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wall-heading h1 { margin: 0; padding-bottom: 2px; font-size: 20px; font-weight: 720; line-height: 1.1; letter-spacing: -.035em; }
+.wall-heading > span:last-child { margin-left: 2px; padding-bottom: 2px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .quick-add {
   display: grid;
@@ -93,12 +96,13 @@ button:disabled { cursor: not-allowed; opacity: .46; }
   box-shadow: var(--focus-ring), 0 2px 7px rgba(44, 43, 38, .06);
 }
 
-.quick-add__mark { justify-self: end; color: var(--accent); font-size: 18px; font-weight: 650; line-height: 1; }
+/* 全角加号的墨迹天生比中文低 2px，单独提上来才和占位文字、按钮文字同一条线 */
+.quick-add__mark { justify-self: end; transform: translateY(-2px); color: var(--accent); font-size: 18px; font-weight: 650; line-height: 1; }
 
 .quick-add input {
   min-width: 0;
   height: 100%;
-  padding: 0 10px;
+  padding: 0 10px 2px;
   border: 0;
   outline: 0;
   color: var(--ink-strong);
@@ -117,9 +121,11 @@ button:disabled { cursor: not-allowed; opacity: .46; }
   font-size: 11px;
 }
 
+.capture-shortcut > span { padding-bottom: 2px; }
+
 kbd {
   min-width: 21px;
-  padding: 2px 5px;
+  padding: 2px 5px 3px;
   border: 1px solid #c2bfb5;
   border-bottom-color: #96948d;
   border-radius: 3px;
@@ -154,7 +160,8 @@ kbd {
   background: var(--accent);
 }
 
-.quick-add .primary-button { height: 33px; min-height: 0; margin-right: 4px; white-space: nowrap; }
+/* 与输入框同字号、同光学中线，整条只读作一行 */
+.quick-add .primary-button { height: 33px; min-height: 0; margin-right: 4px; padding-bottom: 2px; font-size: 14px; white-space: nowrap; }
 .primary-button:hover:not(:disabled) { background: var(--accent-hover); }
 .primary-button:active:not(:disabled) { background: #123a9e; }
 
