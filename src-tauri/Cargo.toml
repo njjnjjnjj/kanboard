@@ -1,8 +1,8 @@
 [package]
-name = "local-kanban"
+name = "kanboard"
 version = "0.1.0"
 description = "A quiet personal kanban board"
-authors = ["local"]
+authors = ["kanboard"]
 edition = "2021"
 
 [lib]

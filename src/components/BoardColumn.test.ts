@@ -12,6 +12,9 @@ const column: TaskColumn = {
     {
       id: "task-1",
       columnId: "todo",
+      projectId: null,
+      project: null,
+      tags: [],
       title: "可拖动任务",
       description: "",
       dueDate: null,

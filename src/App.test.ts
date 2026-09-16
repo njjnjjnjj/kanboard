@@ -6,8 +6,12 @@ import type { Task, TaskColumn } from "./types";
 
 const repository = vi.hoisted(() => ({
   createTask: vi.fn(),
+  deleteTag: vi.fn(),
   deleteTask: vi.fn(),
+  loadProjects: vi.fn(),
+  loadTags: vi.fn(),
   loadTaskWall: vi.fn(),
+  saveProject: vi.fn(),
   saveTaskOrder: vi.fn(),
   updateTask: vi.fn(),
 }));
@@ -17,6 +21,9 @@ vi.mock("./data/taskRepository", () => repository);
 const existingTask: Task = {
   id: "task-1",
   columnId: "todo",
+  projectId: null,
+  project: null,
+  tags: [],
   title: "整理个人任务",
   description: "",
   dueDate: null,
@@ -40,9 +47,12 @@ describe("personal task wall", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     repository.loadTaskWall.mockResolvedValue(wall());
+    repository.loadProjects.mockResolvedValue([]);
+    repository.loadTags.mockResolvedValue([]);
     repository.saveTaskOrder.mockResolvedValue(undefined);
-    repository.updateTask.mockResolvedValue(undefined);
+    repository.updateTask.mockResolvedValue([]);
     repository.deleteTask.mockResolvedValue(undefined);
+    repository.deleteTag.mockResolvedValue(undefined);
   });
 
   it("adds a task from the header and selects it", async () => {
@@ -59,12 +69,44 @@ describe("personal task wall", () => {
     await wrapper.get(".quick-add").trigger("submit");
     await flushPromises();
 
-    expect(repository.createTask).toHaveBeenCalledWith("准备每周回顾", "todo");
+    expect(repository.createTask).toHaveBeenCalledWith("准备每周回顾", "todo", null);
     expect(wrapper.text()).toContain("准备每周回顾");
     expect(wrapper.text()).toContain("任务详情");
     expect(document.activeElement).toBe(wrapper.get("[data-inspector-description]").element);
     expect(wrapper.find("select").exists()).toBe(false);
     wrapper.unmount();
+  });
+
+  it("adds a task directly to the project currently in view", async () => {
+    repository.loadProjects.mockResolvedValue([
+      {
+        id: "project-1",
+        name: "看板桌面版",
+        color: "#285a78",
+        description: "",
+        targetDate: null,
+        status: "active",
+        createdAt: "2026-09-16T00:00:00.000Z",
+        updatedAt: "2026-09-16T00:00:00.000Z",
+      },
+    ]);
+    repository.createTask.mockResolvedValue({
+      ...existingTask,
+      id: "task-2",
+      title: "补充项目筛选",
+      position: 2000,
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+
+    const projectButton = wrapper.findAll("button").find((button) => button.text().includes("看板桌面版"));
+    await projectButton?.trigger("click");
+    await wrapper.get("[aria-label='新任务标题']").setValue("补充项目筛选");
+    await wrapper.get(".quick-add").trigger("submit");
+    await flushPromises();
+
+    expect(repository.createTask).toHaveBeenCalledWith("补充项目筛选", "todo", "project-1");
+    expect(wrapper.get("[data-task-id='task-2']").text()).toContain("看板桌面版");
   });
 
   it("moves a task to completed from its check control", async () => {

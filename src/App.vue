@@ -1,19 +1,28 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import BoardColumn from "./components/BoardColumn.vue";
+import ProjectEditor from "./components/ProjectEditor.vue";
+import ProjectSidebar from "./components/ProjectSidebar.vue";
 import TaskInspector from "./components/TaskInspector.vue";
 import {
   createTask,
+  deleteTag,
   deleteTask,
+  loadProjects,
+  loadTags,
   loadTaskWall,
   saveTaskOrder,
+  saveProject,
   updateTask,
 } from "./data/taskRepository";
 import { restoreDraggedCardToOrigin, type DragOrigin } from "./drag/dragPlaceholder";
 import { dragPointFrom, isPointInDragTrash } from "./drag/trashDropZone";
-import type { Task, TaskChanges, TaskColumn } from "./types";
+import type { Project, ProjectChanges, Tag, Task, TaskChanges, TaskColumn, TaskScope } from "./types";
 
 const columns = ref<TaskColumn[]>([]);
+const projects = ref<Project[]>([]);
+const tags = ref<Tag[]>([]);
+const scope = ref<TaskScope>({ kind: "all" });
 const selectedTaskId = ref<string | null>(null);
 const quickTitle = ref("");
 const quickInput = ref<HTMLInputElement | null>(null);
@@ -24,6 +33,8 @@ const statusMessage = ref("");
 const draggingTask = ref(false);
 const trashActive = ref(false);
 const dragOrigin = ref<DragOrigin | null>(null);
+const projectEditorOpen = ref(false);
+const editingProject = ref<Project | null>(null);
 
 let orderQueue = Promise.resolve();
 let statusTimer: number | undefined;
@@ -36,7 +47,48 @@ const selectedTask = computed(() => {
   return null;
 });
 
+const allTasks = computed(() => columns.value.flatMap((column) => column.tasks));
+
+function matchesScope(task: Task) {
+  const currentScope = scope.value;
+  if (currentScope.kind === "all") return true;
+  if (currentScope.kind === "unassigned") return task.projectId === null;
+  if (currentScope.kind === "project") return task.projectId === currentScope.id;
+  return task.tags.some((tag) => tag.id === currentScope.id);
+}
+
+const visibleColumns = computed(() =>
+  columns.value.map((column) => ({
+    ...column,
+    tasks: column.tasks.filter(matchesScope),
+  })),
+);
+
+const scopeTitle = computed(() => {
+  const currentScope = scope.value;
+  if (currentScope.kind === "project") {
+    return projects.value.find((project) => project.id === currentScope.id)?.name ?? "项目";
+  }
+  if (currentScope.kind === "tag") {
+    const tag = tags.value.find((item) => item.id === currentScope.id);
+    return tag ? `#${tag.name}` : "标签";
+  }
+  return currentScope.kind === "unassigned" ? "无项目" : "全部任务";
+});
+
+const activeProject = computed(() => {
+  const currentScope = scope.value;
+  if (currentScope.kind !== "project") return null;
+  return projects.value.find((project) => project.id === currentScope.id) ?? null;
+});
+
 const openTaskCount = computed(() =>
+  visibleColumns.value
+    .filter((column) => column.id !== "done")
+    .reduce((total, column) => total + column.tasks.length, 0),
+);
+
+const totalOpenTaskCount = computed(() =>
   columns.value
     .filter((column) => column.id !== "done")
     .reduce((total, column) => total + column.tasks.length, 0),
@@ -54,7 +106,14 @@ async function load() {
   loading.value = true;
   errorMessage.value = "";
   try {
-    columns.value = await loadTaskWall();
+    const [taskWall, projectList, tagList] = await Promise.all([
+      loadTaskWall(),
+      loadProjects(),
+      loadTags(),
+    ]);
+    columns.value = taskWall;
+    projects.value = projectList;
+    tags.value = tagList;
     if (selectedTaskId.value && !selectedTask.value) selectedTaskId.value = null;
   } catch (error) {
     console.error(error);
@@ -71,7 +130,12 @@ async function addTask() {
 
   saving.value = true;
   try {
-    const task = await createTask(title, target.id);
+    const projectId = scope.value.kind === "project" ? scope.value.id : null;
+    const task = await createTask(title, target.id, projectId);
+    task.projectId = projectId;
+    task.project = projectId
+      ? projects.value.find((project) => project.id === projectId) ?? null
+      : null;
     target.tasks.push(task);
     quickTitle.value = "";
     selectedTaskId.value = task.id;
@@ -93,7 +157,21 @@ function updateColumnTasks(columnId: string, tasks: Task[]) {
     tasks.forEach((task) => {
       task.columnId = columnId;
     });
-    column.tasks = tasks;
+    if (scope.value.kind === "all") {
+      column.tasks = tasks;
+      return;
+    }
+    const queue = [...tasks];
+    const merged: Task[] = [];
+    for (const current of column.tasks) {
+      if (matchesScope(current)) {
+        const replacement = queue.shift();
+        if (replacement) merged.push(replacement);
+      } else {
+        merged.push(current);
+      }
+    }
+    column.tasks = [...merged, ...queue];
   }
 }
 
@@ -130,19 +208,29 @@ async function saveChanges(taskId: string, changes: TaskChanges) {
 
   saving.value = true;
   try {
-    await updateTask(taskId, changes);
+    const savedTags = await updateTask(taskId, changes);
     const moved = changes.columnId !== task.columnId;
     if (moved) {
       const removed = removeTaskFromWall(taskId);
       const target = columns.value.find((column) => column.id === changes.columnId);
       if (removed && target) target.tasks.push(removed);
     }
-    Object.assign(task, changes, {
+    const { tagNames: _tagNames, ...taskChanges } = changes;
+    Object.assign(task, taskChanges, {
       dueDate: changes.dueDate || null,
+      project: changes.projectId
+        ? projects.value.find((project) => project.id === changes.projectId) ?? null
+        : null,
+      tags: savedTags,
       completedAt: changes.columnId === "done" ? task.completedAt ?? new Date().toISOString() : null,
       updatedAt: new Date().toISOString(),
     });
+    for (const tag of savedTags) {
+      if (!tags.value.some((item) => item.id === tag.id)) tags.value.push(tag);
+    }
+    tags.value.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
     if (moved) queueOrderSave();
+    if (!matchesScope(task)) selectedTaskId.value = null;
     announce("任务已保存");
   } catch (error) {
     console.error(error);
@@ -160,7 +248,65 @@ async function toggleTask(task: Task) {
     dueDate: task.dueDate,
     priority: task.priority,
     columnId: nextColumnId,
+    projectId: task.projectId,
+    tagNames: task.tags.map((tag) => tag.name),
   });
+}
+
+function selectScope(nextScope: TaskScope) {
+  scope.value = nextScope;
+  if (selectedTask.value && !matchesScope(selectedTask.value)) selectedTaskId.value = null;
+}
+
+function openProjectEditor(project: Project | null = null) {
+  editingProject.value = project;
+  projectEditorOpen.value = true;
+}
+
+async function persistProject(changes: ProjectChanges) {
+  saving.value = true;
+  try {
+    const project = await saveProject(changes, editingProject.value?.id ?? null);
+    const index = projects.value.findIndex((item) => item.id === project.id);
+    if (index >= 0) projects.value[index] = { ...projects.value[index], ...project };
+    else projects.value.push(project);
+    projects.value.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+    for (const task of allTasks.value) {
+      if (task.projectId === project.id) {
+        task.project = { id: project.id, name: project.name, color: project.color };
+      }
+    }
+    if (project.status === "archived" && scope.value.kind === "project" && scope.value.id === project.id) {
+      scope.value = { kind: "all" };
+    }
+    projectEditorOpen.value = false;
+    announce(editingProject.value ? "项目已更新" : "项目已创建");
+  } catch (error) {
+    console.error(error);
+    announce("项目保存失败，名称可能已存在");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function removeTag(tag: Tag) {
+  saving.value = true;
+  try {
+    await deleteTag(tag.id);
+    tags.value = tags.value.filter((item) => item.id !== tag.id);
+    for (const task of allTasks.value) {
+      task.tags = task.tags.filter((item) => item.id !== tag.id);
+    }
+    if (scope.value.kind === "tag" && scope.value.id === tag.id) {
+      scope.value = { kind: "all" };
+    }
+    announce(`已删除标签 #${tag.name}`);
+  } catch (error) {
+    console.error(error);
+    announce("标签删除失败，请重试");
+  } finally {
+    saving.value = false;
+  }
 }
 
 async function removeTask(taskId: string) {
@@ -226,7 +372,7 @@ async function handleTaskDrop(result: { taskId: string; intoTrash: boolean }) {
 }
 
 function selectRelativeTask(offset: number) {
-  const tasks = columns.value.flatMap((column) => column.tasks);
+  const tasks = visibleColumns.value.flatMap((column) => column.tasks);
   if (!tasks.length) return;
   const currentIndex = tasks.findIndex((task) => task.id === selectedTaskId.value);
   const nextIndex = currentIndex < 0
@@ -277,7 +423,7 @@ onBeforeUnmount(() => {
       <div class="wall-heading">
         <span class="wall-heading__mark" aria-hidden="true" />
         <h1>任务墙</h1>
-        <span>{{ openTaskCount }} 项未完成</span>
+        <span>{{ totalOpenTaskCount }} 项未完成</span>
       </div>
       <form class="quick-add" @submit.prevent="addTask">
         <span class="quick-add__mark" aria-hidden="true">＋</span>
@@ -301,13 +447,39 @@ onBeforeUnmount(() => {
       <button class="secondary-button" type="button" @click="load">重试</button>
     </div>
     <main v-else class="wall-workspace">
+      <ProjectSidebar
+        :projects="projects"
+        :tags="tags"
+        :tasks="allTasks"
+        :scope="scope"
+        @select="selectScope"
+        @create-project="openProjectEditor()"
+        @edit-project="openProjectEditor"
+        @delete-tag="removeTag"
+      />
+      <section class="board-workspace" :aria-label="scopeTitle">
+        <header class="board-context">
+          <div>
+            <span v-if="activeProject" class="project-dot" :style="{ backgroundColor: activeProject.color }" aria-hidden="true" />
+            <h2>{{ scopeTitle }}</h2>
+            <span>{{ openTaskCount }} 项未完成</span>
+          </div>
+          <button
+            v-if="activeProject"
+            class="text-button"
+            type="button"
+            @click="openProjectEditor(activeProject)"
+          >
+            项目设置
+          </button>
+        </header>
       <div
         class="board-columns"
         :class="{ 'board-columns--trash-target': trashActive }"
         aria-label="个人任务墙"
       >
         <BoardColumn
-          v-for="column in columns"
+          v-for="column in visibleColumns"
           :key="column.id"
           :column="column"
           :selected-task-id="selectedTaskId"
@@ -330,15 +502,26 @@ onBeforeUnmount(() => {
           <span>拖到这里删除</span>
         </div>
       </div>
+      </section>
       <TaskInspector
         :task="selectedTask"
         :columns="columns"
+        :projects="projects"
+        :tags="tags"
         :saving="saving"
         @save="saveChanges"
         @delete="removeTask"
         @close="selectedTaskId = null"
       />
     </main>
+
+    <ProjectEditor
+      :open="projectEditorOpen"
+      :project="editingProject"
+      :saving="saving"
+      @close="projectEditorOpen = false"
+      @save="persistProject"
+    />
 
     <div class="sr-status" role="status" aria-live="polite">{{ statusMessage }}</div>
     <Transition name="toast">

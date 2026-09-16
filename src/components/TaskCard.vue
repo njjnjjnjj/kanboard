@@ -66,6 +66,14 @@ function selectFromKeyboard(event: KeyboardEvent) {
       </button>
       <h3>{{ task.title }}</h3>
     </div>
+    <div v-if="task.project || task.tags.length" class="task-card__identity">
+      <span v-if="task.project" class="task-card__project">
+        <i :style="{ backgroundColor: task.project.color }" aria-hidden="true" />
+        {{ task.project.name }}
+      </span>
+      <span v-for="tag in task.tags.slice(0, 2)" :key="tag.id" class="task-card__tag">#{{ tag.name }}</span>
+      <span v-if="task.tags.length > 2" class="task-card__tag-more">+{{ task.tags.length - 2 }}</span>
+    </div>
     <p v-if="task.description" class="task-card__description">{{ task.description }}</p>
     <div v-if="task.dueDate || task.priority === 'high'" class="task-card__meta">
       <time

@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
-import type { Task, TaskChanges, TaskColumn } from "../types";
+import type { Project, Tag, Task, TaskChanges, TaskColumn } from "../types";
+import TagInput from "./TagInput.vue";
 import TaskSelect from "./TaskSelect.vue";
 
 const props = defineProps<{
   task: Task | null;
   columns: TaskColumn[];
+  projects: Project[];
+  tags: Tag[];
   saving: boolean;
 }>();
 
@@ -23,12 +26,20 @@ const priorityOptions = [
   { value: "none", label: "普通" },
   { value: "high", label: "高" },
 ];
+const projectOptions = computed(() => [
+  { value: "", label: "无项目" },
+  ...props.projects
+    .filter((project) => project.status === "active" || project.id === props.task?.projectId)
+    .map((project) => ({ value: project.id, label: project.name })),
+]);
 const draft = reactive<TaskChanges>({
   title: "",
   description: "",
   dueDate: null,
   priority: "none",
   columnId: "todo",
+  projectId: null,
+  tagNames: [],
 });
 
 watch(
@@ -40,6 +51,8 @@ watch(
     draft.dueDate = task?.dueDate ?? null;
     draft.priority = task?.priority ?? "none";
     draft.columnId = task?.columnId ?? "todo";
+    draft.projectId = task?.projectId ?? null;
+    draft.tagNames = task?.tags.map((tag) => tag.name) ?? [];
   },
   { immediate: true, deep: true },
 );
@@ -55,6 +68,10 @@ function submit() {
 
 function setPriority(value: string) {
   if (value === "none" || value === "high") draft.priority = value;
+}
+
+function setProject(value: string) {
+  draft.projectId = value || null;
 }
 
 function submitWithShortcut(event: KeyboardEvent) {
@@ -87,6 +104,15 @@ function submitWithShortcut(event: KeyboardEvent) {
       </label>
 
       <div class="field-grid field-grid--primary">
+        <div class="field field--project">
+          <span>项目</span>
+          <TaskSelect
+            :model-value="draft.projectId ?? ''"
+            :options="projectOptions"
+            label="项目"
+            @update:model-value="setProject"
+          />
+        </div>
         <div class="field">
           <span>状态</span>
           <TaskSelect v-model="draft.columnId" :options="statusOptions" label="状态" />
@@ -104,6 +130,11 @@ function submitWithShortcut(event: KeyboardEvent) {
           <span>截止时间</span>
           <input v-model="draft.dueDate" type="date" />
         </label>
+      </div>
+
+      <div class="field field--tags">
+        <span>标签</span>
+        <TagInput v-model="draft.tagNames" :suggestions="tags" />
       </div>
 
       <label class="field field--description">
