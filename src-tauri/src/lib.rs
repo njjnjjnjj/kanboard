@@ -15,6 +15,12 @@ pub fn run() {
             sql: include_str!("../migrations/0002_projects_and_tags.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 3,
+            description: "add_flow_workflow",
+            sql: include_str!("../migrations/0003_flow_workflow.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

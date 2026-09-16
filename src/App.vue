@@ -17,6 +17,7 @@ import {
 } from "./data/taskRepository";
 import { restoreDraggedCardToOrigin, type DragOrigin } from "./drag/dragPlaceholder";
 import { dragPointFrom, isPointInDragTrash } from "./drag/trashDropZone";
+import { startFirstOnboarding, startOnboarding } from "./onboarding";
 import type { Project, ProjectChanges, Tag, Task, TaskChanges, TaskColumn, TaskScope } from "./types";
 
 const columns = ref<TaskColumn[]>([]);
@@ -60,6 +61,7 @@ function matchesScope(task: Task) {
 const visibleColumns = computed(() =>
   columns.value.map((column) => ({
     ...column,
+    totalTaskCount: column.tasks.length,
     tasks: column.tasks.filter(matchesScope),
   })),
 );
@@ -142,7 +144,7 @@ async function addTask() {
     await nextTick();
     // 标题来自快速添加，所以焦点落在还没填的“任务说明”上，可以直接接着写
     document.querySelector<HTMLTextAreaElement>("[data-inspector-description]")?.focus();
-    announce("已添加到待处理");
+    announce("已添加到收集箱");
   } catch (error) {
     console.error(error);
     announce("添加失败，请重试");
@@ -154,9 +156,6 @@ async function addTask() {
 function updateColumnTasks(columnId: string, tasks: Task[]) {
   const column = columns.value.find((item) => item.id === columnId);
   if (column) {
-    tasks.forEach((task) => {
-      task.columnId = columnId;
-    });
     if (scope.value.kind === "all") {
       column.tasks = tasks;
       return;
@@ -208,8 +207,10 @@ async function saveChanges(taskId: string, changes: TaskChanges) {
 
   saving.value = true;
   try {
+    const previousColumnId = task.columnId;
+    if (changes.columnId === "blocked" && !changes.blockedReason) changes.blockedReason = "other";
     const savedTags = await updateTask(taskId, changes);
-    const moved = changes.columnId !== task.columnId;
+    const moved = changes.columnId !== previousColumnId;
     if (moved) {
       const removed = removeTaskFromWall(taskId);
       const target = columns.value.find((column) => column.id === changes.columnId);
@@ -223,6 +224,13 @@ async function saveChanges(taskId: string, changes: TaskChanges) {
         : null,
       tags: savedTags,
       completedAt: changes.columnId === "done" ? task.completedAt ?? new Date().toISOString() : null,
+      startedAt: changes.columnId === "doing"
+        ? previousColumnId === "doing" ? task.startedAt : new Date().toISOString()
+        : null,
+      blockedReason: changes.columnId === "blocked" ? changes.blockedReason : null,
+      blockedSince: changes.columnId === "blocked"
+        ? previousColumnId === "blocked" ? task.blockedSince : new Date().toISOString()
+        : null,
       updatedAt: new Date().toISOString(),
     });
     for (const tag of savedTags) {
@@ -241,7 +249,9 @@ async function saveChanges(taskId: string, changes: TaskChanges) {
 }
 
 async function toggleTask(task: Task) {
-  const nextColumnId = task.columnId === "done" ? "todo" : "done";
+  const nextColumnId = task.columnId === "done"
+    ? "todo"
+    : task.columnId === "doing" ? "verify" : "done";
   await saveChanges(task.id, {
     title: task.title,
     description: task.description,
@@ -250,6 +260,7 @@ async function toggleTask(task: Task) {
     columnId: nextColumnId,
     projectId: task.projectId,
     tagNames: task.tags.map((tag) => tag.name),
+    blockedReason: task.blockedReason,
   });
 }
 
@@ -364,6 +375,12 @@ async function handleTaskDrop(result: { taskId: string; intoTrash: boolean }) {
   stopTrashTracking();
   if (!result.intoTrash) {
     queueOrderSave();
+    nextTick(() => {
+      const exceeded = columns.value.find((column) =>
+        column.wipLimit !== null && column.tasks.length > column.wipLimit,
+      );
+      if (exceeded) announce(`${exceeded.title}已超过 WIP 上限，建议先完成一项`);
+    });
     return;
   }
   // Deleting is decided here and nowhere else, so a card released over the
@@ -378,18 +395,38 @@ function selectRelativeTask(offset: number) {
   const nextIndex = currentIndex < 0
     ? 0
     : (currentIndex + offset + tasks.length) % tasks.length;
-  selectedTaskId.value = tasks[nextIndex]?.id ?? null;
-  nextTick(() => {
-    document.querySelector<HTMLElement>(`[data-task-id="${selectedTaskId.value}"]`)?.focus();
-  });
+  const taskId = tasks[nextIndex]?.id;
+  if (!taskId) return;
+  openTask(taskId);
+}
+
+async function openTask(taskId: string) {
+  selectedTaskId.value = taskId;
+  await nextTick();
+  document.querySelector<HTMLTextAreaElement>("[data-inspector-title]")?.focus();
+}
+
+async function closeTask() {
+  const taskId = selectedTaskId.value;
+  selectedTaskId.value = null;
+  await nextTick();
+  if (taskId) {
+    document.querySelector<HTMLElement>(`[data-task-id="${taskId}"]`)?.focus();
+  }
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
   const target = event.target as HTMLElement;
   const editing = /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable;
-  if (event.key === "Escape") {
-    selectedTaskId.value = null;
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
     quickInput.value?.focus();
+    quickInput.value?.select();
+    return;
+  }
+  if (event.key === "Escape") {
+    if (selectedTaskId.value) closeTask();
+    else quickInput.value?.focus();
     return;
   }
   if (editing || event.ctrlKey || event.metaKey || event.altKey) return;
@@ -405,9 +442,12 @@ function handleGlobalKeydown(event: KeyboardEvent) {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener("keydown", handleGlobalKeydown);
-  load();
+  await load();
+  if (errorMessage.value) return;
+  await nextTick();
+  startFirstOnboarding();
 });
 
 onBeforeUnmount(() => {
@@ -425,7 +465,7 @@ onBeforeUnmount(() => {
         <h1>任务墙</h1>
         <span>{{ totalOpenTaskCount }} 项未完成</span>
       </div>
-      <form class="quick-add" @submit.prevent="addTask">
+      <form class="quick-add" data-tour="quick-capture" @submit.prevent="addTask">
         <span class="quick-add__mark" aria-hidden="true">＋</span>
         <input
           ref="quickInput"
@@ -434,11 +474,20 @@ onBeforeUnmount(() => {
           maxlength="160"
           autocomplete="off"
           aria-label="新任务标题"
-          placeholder="记下一件事，回车加入待处理"
+          placeholder="记下一件事，回车加入收集箱"
         />
         <button class="primary-button" type="submit" :disabled="saving || !quickTitle.trim()">添加任务</button>
       </form>
-      <div class="capture-shortcut" aria-hidden="true"><kbd>N</kbd><span>快速记录</span></div>
+      <div class="header-actions">
+        <button
+          class="text-button guide-button"
+          data-tour="guide-help"
+          type="button"
+          :disabled="loading || Boolean(errorMessage)"
+          @click="startOnboarding()"
+        >使用引导</button>
+        <div class="capture-shortcut" aria-hidden="true"><kbd>Ctrl K</kbd><span>快速记录</span></div>
+      </div>
     </header>
 
     <div v-if="loading" class="system-state" role="status">正在打开本地任务墙…</div>
@@ -448,6 +497,7 @@ onBeforeUnmount(() => {
     </div>
     <main v-else class="wall-workspace">
       <ProjectSidebar
+        data-tour="project-filter"
         :projects="projects"
         :tags="tags"
         :tasks="allTasks"
@@ -483,7 +533,7 @@ onBeforeUnmount(() => {
           :key="column.id"
           :column="column"
           :selected-task-id="selectedTaskId"
-          @select="selectedTaskId = $event"
+          @select="openTask"
           @toggle="toggleTask"
           @update-tasks="updateColumnTasks"
           @task-drop="handleTaskDrop"
@@ -503,16 +553,20 @@ onBeforeUnmount(() => {
         </div>
       </div>
       </section>
-      <TaskInspector
-        :task="selectedTask"
-        :columns="columns"
-        :projects="projects"
-        :tags="tags"
-        :saving="saving"
-        @save="saveChanges"
-        @delete="removeTask"
-        @close="selectedTaskId = null"
-      />
+      <Transition name="task-drawer">
+        <div v-if="selectedTask" class="task-drawer-layer" @click.self="closeTask">
+          <TaskInspector
+            :task="selectedTask"
+            :columns="columns"
+            :projects="projects"
+            :tags="tags"
+            :saving="saving"
+            @save="saveChanges"
+            @delete="removeTask"
+            @close="closeTask"
+          />
+        </div>
+      </Transition>
     </main>
 
     <ProjectEditor

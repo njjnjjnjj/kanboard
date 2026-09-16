@@ -1,5 +1,6 @@
 export type Priority = "none" | "high";
 export type ProjectStatus = "active" | "archived";
+export type BlockedReason = "people" | "hardware" | "environment" | "feedback" | "technical" | "dependency" | "other";
 
 export interface Project {
   id: string;
@@ -29,6 +30,9 @@ export interface Task {
   priority: Priority;
   position: number;
   completedAt: string | null;
+  startedAt: string | null;
+  blockedReason: BlockedReason | null;
+  blockedSince: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -37,6 +41,8 @@ export interface TaskColumn {
   id: string;
   title: string;
   position: number;
+  wipLimit: number | null;
+  totalTaskCount?: number;
   tasks: Task[];
 }
 
@@ -48,6 +54,7 @@ export interface TaskChanges {
   columnId: string;
   projectId: string | null;
   tagNames: string[];
+  blockedReason: BlockedReason | null;
 }
 
 export interface ProjectChanges {

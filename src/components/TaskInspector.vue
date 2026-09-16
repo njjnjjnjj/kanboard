@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
-import type { Project, Tag, Task, TaskChanges, TaskColumn } from "../types";
+import type { BlockedReason, Project, Tag, Task, TaskChanges, TaskColumn } from "../types";
+import DateInput from "./DateInput.vue";
 import TagInput from "./TagInput.vue";
 import TaskSelect from "./TaskSelect.vue";
 
 const props = defineProps<{
-  task: Task | null;
+  task: Task;
   columns: TaskColumn[];
   projects: Project[];
   tags: Tag[];
@@ -26,10 +27,19 @@ const priorityOptions = [
   { value: "none", label: "普通" },
   { value: "high", label: "高" },
 ];
+const blockedReasonOptions = [
+  { value: "people", label: "等待其他人" },
+  { value: "hardware", label: "等待硬件" },
+  { value: "environment", label: "等待环境" },
+  { value: "feedback", label: "等待反馈" },
+  { value: "technical", label: "技术问题" },
+  { value: "dependency", label: "外部依赖" },
+  { value: "other", label: "其他" },
+];
 const projectOptions = computed(() => [
   { value: "", label: "无项目" },
   ...props.projects
-    .filter((project) => project.status === "active" || project.id === props.task?.projectId)
+    .filter((project) => project.status === "active" || project.id === props.task.projectId)
     .map((project) => ({ value: project.id, label: project.name })),
 ]);
 const draft = reactive<TaskChanges>({
@@ -40,25 +50,27 @@ const draft = reactive<TaskChanges>({
   columnId: "todo",
   projectId: null,
   tagNames: [],
+  blockedReason: null,
 });
 
 watch(
   () => props.task,
   (task) => {
     confirmingDelete.value = false;
-    draft.title = task?.title ?? "";
-    draft.description = task?.description ?? "";
-    draft.dueDate = task?.dueDate ?? null;
-    draft.priority = task?.priority ?? "none";
-    draft.columnId = task?.columnId ?? "todo";
-    draft.projectId = task?.projectId ?? null;
-    draft.tagNames = task?.tags.map((tag) => tag.name) ?? [];
+    draft.title = task.title;
+    draft.description = task.description;
+    draft.dueDate = task.dueDate;
+    draft.priority = task.priority;
+    draft.columnId = task.columnId;
+    draft.projectId = task.projectId;
+    draft.tagNames = task.tags.map((tag) => tag.name);
+    draft.blockedReason = task.blockedReason;
   },
   { immediate: true, deep: true },
 );
 
 function submit() {
-  if (!props.task || !draft.title.trim()) return;
+  if (!draft.title.trim()) return;
   emit("save", props.task.id, {
     ...draft,
     title: draft.title.trim(),
@@ -74,22 +86,21 @@ function setProject(value: string) {
   draft.projectId = value || null;
 }
 
+function setBlockedReason(value: string) {
+  draft.blockedReason = value as BlockedReason;
+}
+
 function submitWithShortcut(event: KeyboardEvent) {
   if (event.ctrlKey && event.key === "Enter") {
     event.preventDefault();
-    submit();
+    (event.currentTarget as HTMLElement).querySelector("form")?.requestSubmit();
   }
 }
 </script>
 
 <template>
-  <aside class="task-inspector" aria-label="任务详情" @keydown="submitWithShortcut">
-    <div v-if="!task" class="task-inspector__empty">
-      <span aria-hidden="true">—</span>
-      <h2>未选择任务</h2>
-    </div>
-
-    <form v-else class="task-inspector__form" @submit.prevent="submit">
+  <aside class="task-inspector" role="dialog" aria-modal="true" aria-label="任务详情" @keydown="submitWithShortcut">
+    <form class="task-inspector__form" @submit.prevent="submit">
       <header class="task-inspector__header">
         <div>
           <strong>任务详情</strong>
@@ -126,10 +137,19 @@ function submitWithShortcut(event: KeyboardEvent) {
             @update:model-value="setPriority"
           />
         </div>
-        <label class="field field--due">
+        <div class="field field--due">
           <span>截止时间</span>
-          <input v-model="draft.dueDate" type="date" />
-        </label>
+          <DateInput v-model="draft.dueDate" label="截止日期" quick />
+        </div>
+        <div v-if="draft.columnId === 'blocked'" class="field field--blocked-reason">
+          <span>阻塞原因</span>
+          <TaskSelect
+            :model-value="draft.blockedReason ?? 'other'"
+            :options="blockedReasonOptions"
+            label="阻塞原因"
+            @update:model-value="setBlockedReason"
+          />
+        </div>
       </div>
 
       <div class="field field--tags">

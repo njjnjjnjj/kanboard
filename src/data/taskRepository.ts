@@ -21,6 +21,7 @@ interface ColumnRow {
   id: string;
   title: string;
   position: number;
+  wipLimit: number | null;
 }
 
 interface TaskRow {
@@ -35,6 +36,9 @@ interface TaskRow {
   priority: "none" | "high";
   position: number;
   completedAt: string | null;
+  startedAt: string | null;
+  blockedReason: Task["blockedReason"];
+  blockedSince: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -47,7 +51,7 @@ export async function loadTaskWall(): Promise<TaskColumn[]> {
   const db = await database();
   const [columns, taskRows, taskTags] = await Promise.all([
     db.select<ColumnRow[]>(
-      "SELECT id, title, position FROM task_columns ORDER BY position",
+      "SELECT id, title, position, wip_limit AS wipLimit FROM task_columns ORDER BY position",
     ),
     db.select<TaskRow[]>(
       `SELECT t.id,
@@ -61,6 +65,9 @@ export async function loadTaskWall(): Promise<TaskColumn[]> {
               t.priority,
               t.position,
               t.completed_at AS completedAt,
+              t.started_at AS startedAt,
+              t.blocked_reason AS blockedReason,
+              t.blocked_since AS blockedSince,
               t.created_at AS createdAt,
               t.updated_at AS updatedAt
          FROM tasks t
@@ -108,9 +115,13 @@ export async function createTask(
   await db.execute(
     `INSERT INTO tasks (
        id, column_id, project_id, title, description, due_date, priority,
-       position, completed_at, created_at, updated_at
-     ) VALUES ($1, $2, $3, $4, '', NULL, 'none', $5, NULL, $6, $6)`,
+       position, completed_at, started_at, blocked_reason, blocked_since, created_at, updated_at
+     ) VALUES ($1, $2, $3, $4, '', NULL, 'none', $5, NULL, NULL, NULL, NULL, $6, $6)`,
     [id, columnId, projectId, title, position, now],
+  );
+  await db.execute(
+    "INSERT INTO task_events (task_id, from_status, to_status, created_at) VALUES ($1, NULL, $2, $3)",
+    [id, columnId, now],
   );
 
   return {
@@ -125,6 +136,9 @@ export async function createTask(
     priority: "none",
     position,
     completedAt: null,
+    startedAt: null,
+    blockedReason: null,
+    blockedSince: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -132,7 +146,13 @@ export async function createTask(
 
 export async function updateTask(id: string, changes: TaskChanges): Promise<Tag[]> {
   const db = await database();
-  const completedAt = changes.columnId === "done" ? new Date().toISOString() : null;
+  const now = new Date().toISOString();
+  const completedAt = changes.columnId === "done" ? now : null;
+  await db.execute(
+    `INSERT INTO task_events (task_id, from_status, to_status, created_at)
+     SELECT id, column_id, $1, $2 FROM tasks WHERE id = $3 AND column_id <> $1`,
+    [changes.columnId, now, id],
+  );
 
   await db.execute(
     `UPDATE tasks
@@ -143,8 +163,19 @@ export async function updateTask(id: string, changes: TaskChanges): Promise<Tag[
             due_date = $5,
             priority = $6,
             completed_at = $7,
+            started_at = CASE
+              WHEN $1 = 'doing' AND column_id <> 'doing' THEN $8
+              WHEN $1 <> 'doing' THEN NULL
+              ELSE started_at
+            END,
+            blocked_reason = CASE WHEN $1 = 'blocked' THEN $9 ELSE NULL END,
+            blocked_since = CASE
+              WHEN $1 = 'blocked' AND column_id <> 'blocked' THEN $8
+              WHEN $1 <> 'blocked' THEN NULL
+              ELSE blocked_since
+            END,
             updated_at = $8
-      WHERE id = $9`,
+      WHERE id = $10`,
     [
       changes.columnId,
       changes.projectId,
@@ -153,7 +184,8 @@ export async function updateTask(id: string, changes: TaskChanges): Promise<Tag[
       changes.dueDate,
       changes.priority,
       completedAt,
-      new Date().toISOString(),
+      now,
+      changes.blockedReason,
       id,
     ],
   );
@@ -246,17 +278,44 @@ export async function saveTaskOrder(columns: TaskColumn[]): Promise<void> {
         ? task.completedAt ?? updatedAt
         : null;
       await db.execute(
+        `INSERT INTO task_events (task_id, from_status, to_status, created_at)
+         SELECT id, column_id, $1, $2 FROM tasks WHERE id = $3 AND column_id <> $1`,
+        [column.id, updatedAt, task.id],
+      );
+      await db.execute(
         `UPDATE tasks
             SET column_id = $1,
                 position = $2,
                 completed_at = $3,
+                started_at = CASE
+                  WHEN $1 = 'doing' AND column_id <> 'doing' THEN $4
+                  WHEN $1 <> 'doing' THEN NULL
+                  ELSE started_at
+                END,
+                blocked_reason = CASE
+                  WHEN $1 = 'blocked' THEN COALESCE(blocked_reason, 'other')
+                  ELSE NULL
+                END,
+                blocked_since = CASE
+                  WHEN $1 = 'blocked' AND column_id <> 'blocked' THEN $4
+                  WHEN $1 <> 'blocked' THEN NULL
+                  ELSE blocked_since
+                END,
                 updated_at = $4
           WHERE id = $5`,
         [column.id, position, completedAt, updatedAt, task.id],
       );
+      const previousColumnId = task.columnId;
       task.columnId = column.id;
       task.position = position;
       task.completedAt = completedAt;
+      task.startedAt = column.id === "doing"
+        ? previousColumnId === "doing" ? task.startedAt : updatedAt
+        : null;
+      task.blockedReason = column.id === "blocked" ? task.blockedReason ?? "other" : null;
+      task.blockedSince = column.id === "blocked"
+        ? previousColumnId === "blocked" ? task.blockedSince : updatedAt
+        : null;
       task.updatedAt = updatedAt;
     }
   }

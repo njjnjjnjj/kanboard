@@ -21,11 +21,12 @@ describe("task repository ordering", () => {
 
   it("persists a dragged task in its destination column", async () => {
     const columns: TaskColumn[] = [
-      { id: "todo", title: "待处理", position: 1000, tasks: [] },
+      { id: "todo", title: "收集箱", position: 1000, wipLimit: null, tasks: [] },
       {
         id: "doing",
         title: "进行中",
         position: 2000,
+        wipLimit: 2,
         tasks: [
           {
             id: "task-1",
@@ -39,6 +40,9 @@ describe("task repository ordering", () => {
             priority: "none",
             position: 1000,
             completedAt: null,
+            startedAt: null,
+            blockedReason: null,
+            blockedSince: null,
             createdAt: "2026-09-15T00:00:00.000Z",
             updatedAt: "2026-09-15T00:00:00.000Z",
           },
@@ -65,7 +69,7 @@ describe("task project and tag persistence", () => {
 
   it("hydrates project identity and tags when loading the wall", async () => {
     database.select
-      .mockResolvedValueOnce([{ id: "todo", title: "待处理", position: 1000 }])
+      .mockResolvedValueOnce([{ id: "todo", title: "收集箱", position: 1000, wipLimit: null }])
       .mockResolvedValueOnce([
         {
           id: "task-1",
@@ -79,6 +83,9 @@ describe("task project and tag persistence", () => {
           priority: "none",
           position: 1000,
           completedAt: null,
+          startedAt: null,
+          blockedReason: null,
+          blockedSince: null,
           createdAt: "2026-09-16T00:00:00.000Z",
           updatedAt: "2026-09-16T00:00:00.000Z",
         },
@@ -106,9 +113,14 @@ describe("task project and tag persistence", () => {
       columnId: "todo",
       projectId: "project-1",
       tagNames: ["开发"],
+      blockedReason: null,
     });
 
     expect(tags).toEqual([{ id: "tag-1", name: "开发" }]);
+    expect(database.execute).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO task_events"),
+      expect.arrayContaining(["todo", "task-1"]),
+    );
     expect(database.execute).toHaveBeenCalledWith(
       "INSERT INTO task_tags (task_id, tag_id) VALUES ($1, $2)",
       ["task-1", "tag-1"],

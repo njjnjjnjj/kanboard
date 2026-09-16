@@ -30,12 +30,16 @@ function positionMenu() {
   const element = trigger.value;
   if (!element) return;
   const rect = element.getBoundingClientRect();
-  const menuHeight = Math.min(props.options.length * 36 + 8, 220);
-  const opensAbove = window.innerHeight - rect.bottom < menuHeight + 10 && rect.top > menuHeight;
+  const desiredHeight = Math.min(props.options.length * 36 + 8, 220);
+  const availableBelow = Math.max(0, window.innerHeight - rect.bottom - 12);
+  const availableAbove = Math.max(0, rect.top - 12);
+  const opensAbove = availableBelow < desiredHeight && availableAbove > availableBelow;
+  const menuHeight = Math.max(96, Math.min(desiredHeight, opensAbove ? availableAbove : availableBelow));
   menuStyle.value = {
     left: `${rect.left}px`,
     top: `${opensAbove ? rect.top - menuHeight - 6 : rect.bottom + 6}px`,
     width: `${rect.width}px`,
+    maxHeight: `${menuHeight}px`,
   };
 }
 
@@ -60,8 +64,10 @@ function choose(option: SelectOption) {
   trigger.value?.focus();
 }
 
-function moveActive(direction: number) {
+async function moveActive(direction: number) {
   activeIndex.value = (activeIndex.value + direction + props.options.length) % props.options.length;
+  await nextTick();
+  document.getElementById(`${menuId}-option-${activeIndex.value}`)?.scrollIntoView?.({ block: "nearest" });
 }
 
 function handleKeydown(event: KeyboardEvent) {
@@ -99,16 +105,22 @@ function handleDocumentPointer(event: PointerEvent) {
   if (!trigger.value?.contains(target) && !menu?.contains(target)) closeMenu();
 }
 
+function handleWindowScroll(event: Event) {
+  const menu = document.getElementById(menuId);
+  if (event.target instanceof Node && menu?.contains(event.target)) return;
+  closeMenu();
+}
+
 onMounted(() => {
   document.addEventListener("pointerdown", handleDocumentPointer);
   window.addEventListener("resize", closeMenu);
-  window.addEventListener("scroll", closeMenu, true);
+  window.addEventListener("scroll", handleWindowScroll, true);
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", handleDocumentPointer);
   window.removeEventListener("resize", closeMenu);
-  window.removeEventListener("scroll", closeMenu, true);
+  window.removeEventListener("scroll", handleWindowScroll, true);
 });
 </script>
 
