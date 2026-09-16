@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { reactive, ref, watch } from "vue";
-import type { Task, TaskChanges, TaskColumn } from "../types";
+import { computed, reactive, ref, watch } from "vue";
+import type { Project, Tag, Task, TaskChanges, TaskColumn } from "../types";
+import TagInput from "./TagInput.vue";
+import TaskSelect from "./TaskSelect.vue";
 
 const props = defineProps<{
   task: Task | null;
   columns: TaskColumn[];
+  projects: Project[];
+  tags: Tag[];
   saving: boolean;
 }>();
 
@@ -15,12 +19,27 @@ const emit = defineEmits<{
 }>();
 
 const confirmingDelete = ref(false);
+const statusOptions = computed(() =>
+  props.columns.map((column) => ({ value: column.id, label: column.title })),
+);
+const priorityOptions = [
+  { value: "none", label: "普通" },
+  { value: "high", label: "高" },
+];
+const projectOptions = computed(() => [
+  { value: "", label: "无项目" },
+  ...props.projects
+    .filter((project) => project.status === "active" || project.id === props.task?.projectId)
+    .map((project) => ({ value: project.id, label: project.name })),
+]);
 const draft = reactive<TaskChanges>({
   title: "",
   description: "",
   dueDate: null,
   priority: "none",
   columnId: "todo",
+  projectId: null,
+  tagNames: [],
 });
 
 watch(
@@ -32,6 +51,8 @@ watch(
     draft.dueDate = task?.dueDate ?? null;
     draft.priority = task?.priority ?? "none";
     draft.columnId = task?.columnId ?? "todo";
+    draft.projectId = task?.projectId ?? null;
+    draft.tagNames = task?.tags.map((tag) => tag.name) ?? [];
   },
   { immediate: true, deep: true },
 );
@@ -45,6 +66,14 @@ function submit() {
   });
 }
 
+function setPriority(value: string) {
+  if (value === "none" || value === "high") draft.priority = value;
+}
+
+function setProject(value: string) {
+  draft.projectId = value || null;
+}
+
 function submitWithShortcut(event: KeyboardEvent) {
   if (event.ctrlKey && event.key === "Enter") {
     event.preventDefault();
@@ -56,48 +85,66 @@ function submitWithShortcut(event: KeyboardEvent) {
 <template>
   <aside class="task-inspector" aria-label="任务详情" @keydown="submitWithShortcut">
     <div v-if="!task" class="task-inspector__empty">
-      <span class="task-inspector__rule" aria-hidden="true"></span>
-      <h2>选择一项任务</h2>
-      <p>详情、截止时间和状态会显示在这里。</p>
+      <span aria-hidden="true">—</span>
+      <h2>未选择任务</h2>
     </div>
 
     <form v-else class="task-inspector__form" @submit.prevent="submit">
       <header class="task-inspector__header">
-        <span>任务详情</span>
+        <div>
+          <strong>任务详情</strong>
+          <span>{{ columns.find((column) => column.id === draft.columnId)?.title }}</span>
+        </div>
         <button class="icon-button" type="button" aria-label="关闭任务详情" @click="emit('close')">×</button>
       </header>
 
       <label class="field field--title">
-        <span>标题</span>
-        <textarea v-model="draft.title" rows="2" maxlength="160" autofocus />
+        <span>任务标题</span>
+        <textarea data-inspector-title v-model="draft.title" rows="3" maxlength="160" />
       </label>
 
-      <div class="field-grid">
-        <label class="field">
+      <div class="field-grid field-grid--primary">
+        <div class="field field--project">
+          <span>项目</span>
+          <TaskSelect
+            :model-value="draft.projectId ?? ''"
+            :options="projectOptions"
+            label="项目"
+            @update:model-value="setProject"
+          />
+        </div>
+        <div class="field">
           <span>状态</span>
-          <select v-model="draft.columnId">
-            <option v-for="column in columns" :key="column.id" :value="column.id">
-              {{ column.title }}
-            </option>
-          </select>
-        </label>
-        <label class="field">
+          <TaskSelect v-model="draft.columnId" :options="statusOptions" label="状态" />
+        </div>
+        <div class="field">
+          <span>优先级</span>
+          <TaskSelect
+            :model-value="draft.priority"
+            :options="priorityOptions"
+            label="优先级"
+            @update:model-value="setPriority"
+          />
+        </div>
+        <label class="field field--due">
           <span>截止时间</span>
           <input v-model="draft.dueDate" type="date" />
         </label>
       </div>
 
-      <label class="field">
-        <span>优先级</span>
-        <select v-model="draft.priority">
-          <option value="none">普通</option>
-          <option value="high">高</option>
-        </select>
-      </label>
+      <div class="field field--tags">
+        <span>标签</span>
+        <TagInput v-model="draft.tagNames" :suggestions="tags" />
+      </div>
 
       <label class="field field--description">
-        <span>说明</span>
-        <textarea v-model="draft.description" rows="8" placeholder="补充执行时需要的信息" />
+        <span>任务说明</span>
+        <textarea
+          data-inspector-description
+          v-model="draft.description"
+          rows="8"
+          placeholder="记录背景、下一步或需要注意的信息"
+        />
       </label>
 
       <footer class="task-inspector__actions">
@@ -108,11 +155,13 @@ function submitWithShortcut(event: KeyboardEvent) {
         </div>
         <button v-else class="text-button text-button--danger" type="button" @click="confirmingDelete = true">删除任务</button>
 
-        <button class="primary-button" type="submit" :disabled="saving || !draft.title.trim()">
-          {{ saving ? "保存中…" : "保存" }}
-        </button>
+        <div class="task-inspector__save">
+          <span>Ctrl + Enter</span>
+          <button class="primary-button" type="submit" :disabled="saving || !draft.title.trim()">
+            {{ saving ? "保存中…" : "保存更改" }}
+          </button>
+        </div>
       </footer>
-      <p class="task-inspector__shortcut">Ctrl + Enter 保存</p>
     </form>
   </aside>
 </template>
