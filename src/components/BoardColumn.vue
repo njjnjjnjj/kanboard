@@ -22,6 +22,10 @@ const taskList = computed({
   get: () => props.column.tasks,
   set: (tasks: Task[]) => emit("updateTasks", props.column.id, tasks),
 });
+const wipCount = computed(() => props.column.totalTaskCount ?? props.column.tasks.length);
+const wipExceeded = computed(() =>
+  props.column.wipLimit !== null && wipCount.value > props.column.wipLimit,
+);
 
 /**
  * The delete zone covers the lower part of every column. Sortable resolves the
@@ -57,7 +61,7 @@ function endDrag(event: SortableDragEvent) {
 <template>
   <section
     class="board-column"
-    :class="`board-column--${column.id}`"
+    :class="[`board-column--${column.id}`, { 'board-column--wip-exceeded': wipExceeded }]"
     :aria-labelledby="`column-${column.id}`"
     :data-column="column.id"
   >
@@ -66,7 +70,10 @@ function endDrag(event: SortableDragEvent) {
         <span class="board-column__signal" aria-hidden="true" />
         <h2 :id="`column-${column.id}`">{{ column.title }}</h2>
       </div>
-      <span>{{ column.tasks.length }}</span>
+      <span :aria-label="column.wipLimit === null ? undefined : `在制品 ${wipCount} / ${column.wipLimit}`">
+        {{ wipCount }}<template v-if="column.wipLimit !== null"> / {{ column.wipLimit }}</template>
+        <strong v-if="wipExceeded">超限</strong>
+      </span>
     </header>
 
     <VueDraggable

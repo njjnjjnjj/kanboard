@@ -30,16 +30,22 @@ const existingTask: Task = {
   priority: "none",
   position: 1000,
   completedAt: null,
+  startedAt: null,
+  blockedReason: null,
+  blockedSince: null,
   createdAt: "2026-09-15T00:00:00.000Z",
   updatedAt: "2026-09-15T00:00:00.000Z",
 };
 
 function wall(): TaskColumn[] {
   return [
-    { id: "todo", title: "待处理", position: 1000, tasks: [{ ...existingTask }] },
-    { id: "doing", title: "进行中", position: 2000, tasks: [] },
-    { id: "waiting", title: "等待", position: 3000, tasks: [] },
-    { id: "done", title: "已完成", position: 4000, tasks: [] },
+    { id: "todo", title: "收集箱", position: 1000, wipLimit: null, tasks: [{ ...existingTask }] },
+    { id: "backlog", title: "待办池", position: 2000, wipLimit: null, tasks: [] },
+    { id: "ready", title: "就绪", position: 3000, wipLimit: null, tasks: [] },
+    { id: "doing", title: "进行中", position: 4000, wipLimit: 2, tasks: [] },
+    { id: "verify", title: "待验证", position: 5000, wipLimit: 2, tasks: [] },
+    { id: "blocked", title: "阻塞", position: 6000, wipLimit: null, tasks: [] },
+    { id: "done", title: "已完成", position: 7000, wipLimit: null, tasks: [] },
   ];
 }
 
@@ -74,6 +80,35 @@ describe("personal task wall", () => {
     expect(wrapper.text()).toContain("任务详情");
     expect(document.activeElement).toBe(wrapper.get("[data-inspector-description]").element);
     expect(wrapper.find("select").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("focuses quick capture with Ctrl + K", async () => {
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true }));
+
+    expect(document.activeElement).toBe(wrapper.get("[aria-label='新任务标题']").element);
+    wrapper.unmount();
+  });
+
+  it("keeps task details out of the layout until a task is selected", async () => {
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+
+    expect(wrapper.find(".task-inspector").exists()).toBe(false);
+    expect(wrapper.find(".task-drawer-layer").exists()).toBe(false);
+
+    await wrapper.get("[data-task-id='task-1']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find(".task-drawer-layer").exists()).toBe(true);
+    expect(document.activeElement).toBe(wrapper.get("[data-inspector-title]").element);
+
+    await wrapper.get("[aria-label='关闭任务详情']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find(".task-inspector").exists()).toBe(false);
+    expect(document.activeElement).toBe(wrapper.get("[data-task-id='task-1']").element);
     wrapper.unmount();
   });
 
@@ -121,6 +156,24 @@ describe("personal task wall", () => {
       expect.objectContaining({ columnId: "done" }),
     );
     expect(wrapper.find("[aria-label='恢复任务：整理个人任务']").exists()).toBe(true);
+  });
+
+  it("moves active work to verification instead of marking it done", async () => {
+    const activeWall = wall();
+    const task = activeWall[0]!.tasks.shift()!;
+    task.columnId = "doing";
+    activeWall.find((column) => column.id === "doing")!.tasks.push(task);
+    repository.loadTaskWall.mockResolvedValue(activeWall);
+    const wrapper = mount(App);
+    await flushPromises();
+
+    await wrapper.get("[aria-label='提交验证：整理个人任务']").trigger("click");
+    await flushPromises();
+
+    expect(repository.updateTask).toHaveBeenCalledWith(
+      "task-1",
+      expect.objectContaining({ columnId: "verify" }),
+    );
   });
 
   /** Delete zone geometry as laid out by the app: a compact pill at the bottom centre. */

@@ -8,6 +8,7 @@ const column: TaskColumn = {
   id: "todo",
   title: "待处理",
   position: 1000,
+  wipLimit: null,
   tasks: [
     {
       id: "task-1",
@@ -21,6 +22,9 @@ const column: TaskColumn = {
       priority: "none",
       position: 1000,
       completedAt: null,
+      startedAt: null,
+      blockedReason: null,
+      blockedSince: null,
       createdAt: "2026-09-15T00:00:00.000Z",
       updatedAt: "2026-09-15T00:00:00.000Z",
     },
@@ -117,5 +121,18 @@ describe("BoardColumn drag contract", () => {
 
     expect(wrapper.find(".board-column__empty").exists()).toBe(false);
     expect(wrapper.get(".board-column__tasks").text()).toBe("");
+  });
+
+  it("shows and highlights a WIP limit exceeded by the full column", () => {
+    const wrapper = mount(BoardColumn, {
+      props: {
+        column: { ...column, id: "doing", wipLimit: 2, totalTaskCount: 3 },
+        selectedTaskId: null,
+      },
+    });
+
+    expect(wrapper.classes()).toContain("board-column--wip-exceeded");
+    expect(wrapper.get(".board-column__header").text()).toContain("3 / 2");
+    expect(wrapper.get(".board-column__header").text()).toContain("超限");
   });
 });

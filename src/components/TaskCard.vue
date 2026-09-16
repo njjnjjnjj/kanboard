@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { elapsedLabel, isAgingWarning } from "../flowTime";
 import type { Task } from "../types";
 
 const props = defineProps<{
@@ -13,6 +14,26 @@ const emit = defineEmits<{
 }>();
 
 const isDone = computed(() => props.task.columnId === "done");
+const toggleLabel = computed(() => {
+  if (isDone.value) return `恢复任务：${props.task.title}`;
+  if (props.task.columnId === "doing") return `提交验证：${props.task.title}`;
+  return `完成任务：${props.task.title}`;
+});
+const ageSince = computed(() => props.task.columnId === "doing"
+  ? props.task.startedAt
+  : props.task.columnId === "blocked" ? props.task.blockedSince : null,
+);
+const ageLabel = computed(() => elapsedLabel(ageSince.value));
+const agingWarning = computed(() => isAgingWarning(ageSince.value));
+const blockedReasonLabels = {
+  people: "等待其他人",
+  hardware: "等待硬件",
+  environment: "等待环境",
+  feedback: "等待反馈",
+  technical: "技术问题",
+  dependency: "外部依赖",
+  other: "其他",
+} as const;
 const todayKey = computed(() => {
   const today = new Date();
   const month = String(today.getMonth() + 1).padStart(2, "0");
@@ -56,7 +77,7 @@ function selectFromKeyboard(event: KeyboardEvent) {
       <button
         class="task-card__check"
         type="button"
-        :aria-label="isDone ? `恢复任务：${task.title}` : `完成任务：${task.title}`"
+        :aria-label="toggleLabel"
         :aria-pressed="isDone"
         @click.stop="emit('toggle', task)"
       >
@@ -75,7 +96,10 @@ function selectFromKeyboard(event: KeyboardEvent) {
       <span v-if="task.tags.length > 2" class="task-card__tag-more">+{{ task.tags.length - 2 }}</span>
     </div>
     <p v-if="task.description" class="task-card__description">{{ task.description }}</p>
-    <div v-if="task.dueDate || task.priority === 'high'" class="task-card__meta">
+    <div v-if="task.dueDate || task.priority === 'high' || ageLabel" class="task-card__meta">
+      <span v-if="ageLabel" class="task-card__age" :class="{ 'task-card__age--warning': agingWarning }">
+        {{ task.columnId === "blocked" ? "阻塞" : "进行" }} · {{ ageLabel }}<template v-if="agingWarning"> ⚠</template>
+      </span>
       <time
         v-if="task.dueDate"
         :datetime="task.dueDate"
@@ -85,5 +109,8 @@ function selectFromKeyboard(event: KeyboardEvent) {
       </time>
       <span v-if="task.priority === 'high'" class="task-card__priority">高优先级</span>
     </div>
+    <p v-if="task.columnId === 'blocked' && task.blockedReason" class="task-card__blocked-reason">
+      {{ blockedReasonLabels[task.blockedReason] }}
+    </p>
   </article>
 </template>

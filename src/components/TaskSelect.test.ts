@@ -44,4 +44,27 @@ describe("TaskSelect", () => {
     expect(wrapper.emitted("update:modelValue")).toEqual([["doing"]]);
     wrapper.unmount();
   });
+
+  it("keeps the listbox open while its own options are scrolled", async () => {
+    const wrapper = mount(TaskSelect, {
+      attachTo: document.body,
+      props: {
+        modelValue: "todo",
+        options: Array.from({ length: 12 }, (_, index) => ({
+          value: index ? `status-${index}` : "todo",
+          label: `状态 ${index + 1}`,
+        })),
+        label: "状态",
+      },
+    });
+
+    await wrapper.get(".task-select__trigger").trigger("click");
+    const listbox = document.querySelector<HTMLElement>("[role='listbox']")!;
+    listbox.dispatchEvent(new Event("scroll"));
+    await wrapper.vm.$nextTick();
+
+    expect(document.querySelector("[role='listbox']")).not.toBeNull();
+    expect(listbox.style.maxHeight).not.toBe("");
+    wrapper.unmount();
+  });
 });

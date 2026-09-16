@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { reactive, watch } from "vue";
 import type { Project, ProjectChanges } from "../types";
+import DateInput from "./DateInput.vue";
 
 const props = defineProps<{
   open: boolean;
@@ -77,10 +78,10 @@ function submit() {
         <textarea v-model="draft.description" rows="5" placeholder="记录目标、背景、资料位置或完成标准" />
       </label>
 
-      <label class="field">
+      <div class="field">
         <span>目标日期</span>
-        <input v-model="draft.targetDate" type="date" />
-      </label>
+        <DateInput v-model="draft.targetDate" label="项目目标日期" quick />
+      </div>
 
       <footer>
         <button
