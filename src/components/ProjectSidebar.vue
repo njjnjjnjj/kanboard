@@ -8,6 +8,7 @@ const props = defineProps<{
   tags: Tag[];
   tasks: Task[];
   scope: TaskScope;
+  trashCount: number;
 }>();
 
 const emit = defineEmits<{
@@ -62,6 +63,18 @@ function tagUsageCount(tagId: string) {
         <span class="workspace-nav__empty-mark" aria-hidden="true">—</span>
         <span>无项目</span>
         <small>{{ taskCount(null) }}</small>
+      </button>
+      <button
+        class="workspace-nav__row workspace-nav__trash"
+        :class="{ 'workspace-nav__row--selected': isSelected('trash') }"
+        type="button"
+        @click="emit('select', { kind: 'trash' })"
+      >
+        <svg viewBox="0 0 18 18" aria-hidden="true">
+          <path d="M3.5 5h11M7 3.5h4M5.7 5l.5 9.5h5.6l.5-9.5M7.6 7.5v4.3M10.4 7.5v4.3" />
+        </svg>
+        <span>回收站</span>
+        <small>{{ trashCount }}</small>
       </button>
     </div>
 

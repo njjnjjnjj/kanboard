@@ -4,16 +4,34 @@ import { VueDraggable } from "vue-draggable-plus";
 import App from "./App.vue";
 import type { Task, TaskColumn } from "./types";
 
+const taskCreatedListener = vi.hoisted(() => ({
+  value: undefined as undefined | ((event: { payload: string | null }) => void | Promise<void>),
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async (_event: string, listener: typeof taskCreatedListener.value) => {
+    taskCreatedListener.value = listener;
+    return vi.fn();
+  }),
+}));
+
 const repository = vi.hoisted(() => ({
   createTask: vi.fn(),
   deleteTag: vi.fn(),
   deleteTask: vi.fn(),
+  loadDeletedTasks: vi.fn(),
   loadProjects: vi.fn(),
   loadTags: vi.fn(),
+  loadTaskEvents: vi.fn(),
   loadTaskWall: vi.fn(),
   saveProject: vi.fn(),
   saveTaskOrder: vi.fn(),
   updateTask: vi.fn(),
+  createRecurringSuccessor: vi.fn(),
+  pauseFocus: vi.fn(),
+  restoreTask: vi.fn(),
+  startFocus: vi.fn(),
+  trashTask: vi.fn(),
 }));
 
 vi.mock("./data/taskRepository", () => repository);
@@ -33,6 +51,10 @@ const existingTask: Task = {
   startedAt: null,
   blockedReason: null,
   blockedSince: null,
+  checklist: [],
+  recurrenceRule: "none",
+  focusStartedAt: null,
+  focusElapsedSeconds: 0,
   createdAt: "2026-09-15T00:00:00.000Z",
   updatedAt: "2026-09-15T00:00:00.000Z",
 };
@@ -52,9 +74,17 @@ function wall(): TaskColumn[] {
 describe("personal task wall", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    taskCreatedListener.value = undefined;
     repository.loadTaskWall.mockResolvedValue(wall());
     repository.loadProjects.mockResolvedValue([]);
     repository.loadTags.mockResolvedValue([]);
+    repository.loadTaskEvents.mockResolvedValue([]);
+    repository.loadDeletedTasks.mockResolvedValue([]);
+    repository.createRecurringSuccessor.mockResolvedValue(false);
+    repository.pauseFocus.mockResolvedValue(undefined);
+    repository.restoreTask.mockResolvedValue(undefined);
+    repository.startFocus.mockResolvedValue(undefined);
+    repository.trashTask.mockResolvedValue("2026-09-17T00:00:00.000Z");
     repository.saveTaskOrder.mockResolvedValue(undefined);
     repository.updateTask.mockResolvedValue([]);
     repository.deleteTask.mockResolvedValue(undefined);
@@ -80,6 +110,22 @@ describe("personal task wall", () => {
     expect(wrapper.text()).toContain("任务详情");
     expect(document.activeElement).toBe(wrapper.get("[data-inspector-description]").element);
     expect(wrapper.find("select").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("opens the newly captured task for editing when requested", async () => {
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+    const refreshedWall = wall();
+    refreshedWall[0].tasks.push({ ...existingTask, id: "new-task", title: "补充任务信息" });
+    repository.loadTaskWall.mockResolvedValue(refreshedWall);
+
+    await taskCreatedListener.value?.({ payload: "new-task" });
+    await flushPromises();
+
+    expect(repository.loadTaskWall).toHaveBeenCalledTimes(2);
+    expect(wrapper.find(".task-drawer-layer").exists()).toBe(true);
+    expect((wrapper.get("[data-inspector-title]").element as HTMLInputElement).value).toBe("补充任务信息");
     wrapper.unmount();
   });
 
@@ -185,7 +231,7 @@ describe("personal task wall", () => {
     return zone;
   }
 
-  it("deletes a task dropped on the drag trash", async () => {
+  it("moves a task to trash and offers undo after dropping it on the delete zone", async () => {
     const wrapper = mount(App, { attachTo: document.body });
     await flushPromises();
     stubTrashZone(wrapper);
@@ -197,21 +243,27 @@ describe("personal task wall", () => {
     });
     await flushPromises();
 
-    expect(repository.deleteTask).toHaveBeenCalledWith("task-1");
+    expect(repository.trashTask).toHaveBeenCalledWith("task-1");
     expect(wrapper.text()).not.toContain("整理个人任务");
+    expect(wrapper.get("[aria-label='撤回删除']").text()).toContain("撤回删除");
+
+    await wrapper.get("[aria-label='撤回删除']").trigger("click");
+    await flushPromises();
+    expect(repository.restoreTask).toHaveBeenCalledWith("task-1");
     wrapper.unmount();
   });
 
   it("pulls the dragged card out of the column while the pointer is on the trash", async () => {
     const wrapper = mount(App, { attachTo: document.body });
     await flushPromises();
-    stubTrashZone(wrapper);
+    const zone = stubTrashZone(wrapper);
     const sourceColumn = wrapper.findAllComponents(VueDraggable)[0];
     const card = wrapper.get("[data-task-id='task-1']").element as HTMLElement;
     const todoList = wrapper.get('[data-column="todo"] .board-column__tasks').element;
     const doingList = wrapper.get('[data-column="doing"] .board-column__tasks').element;
 
     sourceColumn.vm.$emit("start", { item: card, oldDraggableIndex: 0 });
+    expect(zone.hasAttribute("disabled")).toBe(false);
     // Sortable parks the dragged node in whatever list the pointer last hovered.
     card.classList.add("task-card--ghost");
     doingList.appendChild(card);
@@ -239,7 +291,7 @@ describe("personal task wall", () => {
     });
     await flushPromises();
 
-    expect(repository.deleteTask).not.toHaveBeenCalled();
+    expect(repository.trashTask).not.toHaveBeenCalled();
     expect(repository.saveTaskOrder).toHaveBeenCalled();
     wrapper.unmount();
   });

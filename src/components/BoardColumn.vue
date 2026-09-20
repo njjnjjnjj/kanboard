@@ -8,6 +8,7 @@ import TaskCard from "./TaskCard.vue";
 const props = defineProps<{
   column: TaskColumn;
   selectedTaskId: string | null;
+  dragGroup?: string;
 }>();
 
 const emit = defineEmits<{
@@ -79,7 +80,7 @@ function endDrag(event: SortableDragEvent) {
     <VueDraggable
       v-model="taskList"
       class="board-column__tasks"
-      :group="{ name: 'personal-tasks' }"
+      :group="{ name: dragGroup ?? 'personal-tasks' }"
       :on-move="allowInsert"
       draggable=".task-card"
       filter=".task-card__check"

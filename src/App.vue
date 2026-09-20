@@ -1,24 +1,36 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { listen, type Event, type UnlistenFn } from "@tauri-apps/api/event";
 import BoardColumn from "./components/BoardColumn.vue";
+import FlowDashboard from "./components/FlowDashboard.vue";
+import FocusBar from "./components/FocusBar.vue";
 import ProjectEditor from "./components/ProjectEditor.vue";
 import ProjectSidebar from "./components/ProjectSidebar.vue";
 import TaskInspector from "./components/TaskInspector.vue";
+import TaskTrash from "./components/TaskTrash.vue";
 import {
+  createRecurringSuccessor,
   createTask,
   deleteTag,
   deleteTask,
+  loadDeletedTasks,
   loadProjects,
   loadTags,
+  loadTaskEvents,
   loadTaskWall,
+  pauseFocus,
+  restoreTask,
   saveTaskOrder,
   saveProject,
+  startFocus,
+  trashTask,
   updateTask,
 } from "./data/taskRepository";
 import { restoreDraggedCardToOrigin, type DragOrigin } from "./drag/dragPlaceholder";
 import { dragPointFrom, isPointInDragTrash } from "./drag/trashDropZone";
 import { startFirstOnboarding, startOnboarding } from "./onboarding";
-import type { Project, ProjectChanges, Tag, Task, TaskChanges, TaskColumn, TaskScope } from "./types";
+import { calculateFlowMetrics } from "./flowMetrics";
+import type { DeletedTask, FlowMetrics, Project, ProjectChanges, Tag, Task, TaskChanges, TaskColumn, TaskEvent, TaskScope } from "./types";
 
 const columns = ref<TaskColumn[]>([]);
 const projects = ref<Project[]>([]);
@@ -27,6 +39,15 @@ const scope = ref<TaskScope>({ kind: "all" });
 const selectedTaskId = ref<string | null>(null);
 const quickTitle = ref("");
 const quickInput = ref<HTMLInputElement | null>(null);
+const searchInput = ref<HTMLInputElement | null>(null);
+const searchQuery = ref("");
+const filterMode = ref<"all" | "due" | "high" | "aging">("all");
+const swimlaneMode = ref(false);
+const dashboardOpen = ref(false);
+const taskEvents = ref<TaskEvent[]>([]);
+const deletedTasks = ref<DeletedTask[]>([]);
+const recentlyDeleted = ref<{ task: Task; deletedAt: string } | null>(null);
+const undoSeconds = ref(3);
 const loading = ref(true);
 const saving = ref(false);
 const errorMessage = ref("");
@@ -37,8 +58,10 @@ const dragOrigin = ref<DragOrigin | null>(null);
 const projectEditorOpen = ref(false);
 const editingProject = ref<Project | null>(null);
 
-let orderQueue = Promise.resolve();
+let orderQueue: Promise<boolean> = Promise.resolve(true);
 let statusTimer: number | undefined;
+let unlistenTaskCreated: UnlistenFn | undefined;
+let undoTimer: number | undefined;
 
 const selectedTask = computed(() => {
   for (const column of columns.value) {
@@ -49,9 +72,12 @@ const selectedTask = computed(() => {
 });
 
 const allTasks = computed(() => columns.value.flatMap((column) => column.tasks));
+const focusedTask = computed(() => allTasks.value.find((task) => task.focusStartedAt) ?? null);
+const metrics = computed<FlowMetrics>(() => calculateFlowMetrics(allTasks.value, taskEvents.value));
 
 function matchesScope(task: Task) {
   const currentScope = scope.value;
+  if (currentScope.kind === "trash") return false;
   if (currentScope.kind === "all") return true;
   if (currentScope.kind === "unassigned") return task.projectId === null;
   if (currentScope.kind === "project") return task.projectId === currentScope.id;
@@ -62,12 +88,30 @@ const visibleColumns = computed(() =>
   columns.value.map((column) => ({
     ...column,
     totalTaskCount: column.tasks.length,
-    tasks: column.tasks.filter(matchesScope),
+    tasks: column.tasks.filter(isVisibleTask),
   })),
 );
 
+const swimlanes = computed(() => {
+  const lanes = projects.value
+    .filter((project) => project.status === "active" && allTasks.value.some((task) => task.projectId === project.id && isVisibleTask(task)))
+    .map((project) => ({ id: project.id, name: project.name, color: project.color, projectId: project.id as string | null }));
+  if (allTasks.value.some((task) => task.projectId === null && isVisibleTask(task))) {
+    lanes.push({ id: "unassigned", name: "无项目", color: "#8a8d87", projectId: null });
+  }
+  return lanes.map((lane) => ({
+    ...lane,
+    columns: columns.value.map((column) => ({
+      ...column,
+      totalTaskCount: column.tasks.filter((task) => task.projectId === lane.projectId).length,
+      tasks: column.tasks.filter((task) => task.projectId === lane.projectId && isVisibleTask(task)),
+    })),
+  }));
+});
+
 const scopeTitle = computed(() => {
   const currentScope = scope.value;
+  if (currentScope.kind === "trash") return "回收站";
   if (currentScope.kind === "project") {
     return projects.value.find((project) => project.id === currentScope.id)?.name ?? "项目";
   }
@@ -108,14 +152,18 @@ async function load() {
   loading.value = true;
   errorMessage.value = "";
   try {
-    const [taskWall, projectList, tagList] = await Promise.all([
+    const [taskWall, projectList, tagList, events, trashedTasks] = await Promise.all([
       loadTaskWall(),
       loadProjects(),
       loadTags(),
+      loadTaskEvents(),
+      loadDeletedTasks(),
     ]);
     columns.value = taskWall;
     projects.value = projectList;
     tags.value = tagList;
+    taskEvents.value = events;
+    deletedTasks.value = trashedTasks;
     if (selectedTaskId.value && !selectedTask.value) selectedTaskId.value = null;
   } catch (error) {
     console.error(error);
@@ -153,17 +201,18 @@ async function addTask() {
   }
 }
 
-function updateColumnTasks(columnId: string, tasks: Task[]) {
+function updateColumnTasks(columnId: string, tasks: Task[], projectId: string | null | undefined = undefined) {
   const column = columns.value.find((item) => item.id === columnId);
   if (column) {
-    if (scope.value.kind === "all") {
+    if (scope.value.kind === "all" && !searchQuery.value && filterMode.value === "all" && projectId === undefined) {
       column.tasks = tasks;
       return;
     }
+    const belongsToView = (task: Task) => isVisibleTask(task) && (projectId === undefined || task.projectId === projectId);
     const queue = [...tasks];
     const merged: Task[] = [];
     for (const current of column.tasks) {
-      if (matchesScope(current)) {
+      if (belongsToView(current)) {
         const replacement = queue.shift();
         if (replacement) merged.push(replacement);
       } else {
@@ -177,12 +226,17 @@ function updateColumnTasks(columnId: string, tasks: Task[]) {
 function queueOrderSave() {
   orderQueue = orderQueue
     .then(() => saveTaskOrder(columns.value))
-    .then(() => announce("任务位置已保存"))
+    .then(() => {
+      announce("任务位置已保存");
+      return true;
+    })
     .catch(async (error) => {
       console.error(error);
       announce("位置保存失败，已恢复原顺序");
       await load();
+      return false;
     });
+  return orderQueue;
 }
 
 function removeTaskFromWall(taskId: string): Task | null {
@@ -209,6 +263,7 @@ async function saveChanges(taskId: string, changes: TaskChanges) {
   try {
     const previousColumnId = task.columnId;
     if (changes.columnId === "blocked" && !changes.blockedReason) changes.blockedReason = "other";
+    const shouldRepeat = changes.columnId === "done" && previousColumnId !== "done" && changes.recurrenceRule !== "none";
     const savedTags = await updateTask(taskId, changes);
     const moved = changes.columnId !== previousColumnId;
     if (moved) {
@@ -231,6 +286,9 @@ async function saveChanges(taskId: string, changes: TaskChanges) {
       blockedSince: changes.columnId === "blocked"
         ? previousColumnId === "blocked" ? task.blockedSince : new Date().toISOString()
         : null,
+      checklist: changes.checklist.map((item, index) => ({ ...item, position: (index + 1) * 1000 })),
+      recurrenceRule: changes.recurrenceRule,
+      focusStartedAt: changes.columnId === "done" ? null : task.focusStartedAt,
       updatedAt: new Date().toISOString(),
     });
     for (const tag of savedTags) {
@@ -238,7 +296,14 @@ async function saveChanges(taskId: string, changes: TaskChanges) {
     }
     tags.value.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
     if (moved) queueOrderSave();
-    if (!matchesScope(task)) selectedTaskId.value = null;
+    if (shouldRepeat) {
+      await orderQueue;
+      await createRecurringSuccessor(task);
+      await load();
+      announce("任务已完成，下一次任务已加入就绪");
+      return;
+    }
+    if (!isVisibleTask(task)) selectedTaskId.value = null;
     announce("任务已保存");
   } catch (error) {
     console.error(error);
@@ -261,7 +326,48 @@ async function toggleTask(task: Task) {
     projectId: task.projectId,
     tagNames: task.tags.map((tag) => tag.name),
     blockedReason: task.blockedReason,
+    checklist: task.checklist,
+    recurrenceRule: task.recurrenceRule,
   });
+}
+
+async function handleTaskCreated(event: Event<string | null>) {
+  await load();
+  if (event.payload) await openTask(event.payload);
+}
+
+async function beginFocus(task: Task | null = selectedTask.value) {
+  const target = task ?? columns.value.find((column) => column.id === "ready")?.tasks[0] ?? null;
+  if (!target || !["ready", "doing"].includes(target.columnId)) {
+    announce("请选择就绪或进行中的任务");
+    return;
+  }
+  await startFocus(target);
+  await load();
+  announce(`开始专注：${target.title}`);
+}
+
+async function pauseFocused(task: Task) {
+  await pauseFocus(task.id);
+  await load();
+  announce("专注计时已暂停");
+}
+
+async function moveFocused(task: Task, columnId: "verify" | "blocked") {
+  await saveChanges(task.id, {
+    title: task.title,
+    description: task.description,
+    dueDate: task.dueDate,
+    priority: task.priority,
+    columnId,
+    projectId: task.projectId,
+    tagNames: task.tags.map((tag) => tag.name),
+    blockedReason: columnId === "blocked" ? task.blockedReason ?? "other" : null,
+    checklist: task.checklist,
+    recurrenceRule: task.recurrenceRule,
+  });
+  await pauseFocus(task.id);
+  await load();
 }
 
 function selectScope(nextScope: TaskScope) {
@@ -332,8 +438,21 @@ async function removeTask(taskId: string) {
   if (selectedTaskId.value === taskId) selectedTaskId.value = null;
 
   try {
-    await deleteTask(taskId);
-    announce("任务已删除");
+    const deletedAt = await trashTask(taskId);
+    deletedTasks.value.unshift({ ...task, deletedAt });
+    recentlyDeleted.value = { task, deletedAt };
+    undoSeconds.value = 3;
+    window.clearInterval(undoTimer);
+    const deadline = Date.now() + 3000;
+    undoTimer = window.setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      undoSeconds.value = remaining;
+      if (remaining === 0) {
+        window.clearInterval(undoTimer);
+        recentlyDeleted.value = null;
+      }
+    }, 100);
+    announce("任务已移入回收站");
   } catch (error) {
     console.error(error);
     announce("删除失败，请重试");
@@ -371,10 +490,17 @@ function beginTaskDrag(columnId: string, origin: { taskId: string; index: number
 }
 
 async function handleTaskDrop(result: { taskId: string; intoTrash: boolean }) {
+  const origin = dragOrigin.value;
   draggingTask.value = false;
   stopTrashTracking();
   if (!result.intoTrash) {
-    queueOrderSave();
+    const saved = await queueOrderSave();
+    const movedTask = findTask(result.taskId);
+    if (saved && origin?.columnId !== "done" && movedTask?.columnId === "done" && movedTask.recurrenceRule !== "none") {
+      await createRecurringSuccessor(movedTask);
+      await load();
+      announce("任务已完成，下一次任务已加入就绪");
+    }
     nextTick(() => {
       const exceeded = columns.value.find((column) =>
         column.wipLimit !== null && column.tasks.length > column.wipLimit,
@@ -400,6 +526,22 @@ function selectRelativeTask(offset: number) {
   openTask(taskId);
 }
 
+function matchesFilters(task: Task) {
+  const query = searchQuery.value.trim().toLocaleLowerCase();
+  if (query && ![task.title, task.description, task.project?.name ?? "", ...task.tags.map((tag) => tag.name)]
+    .some((value) => value.toLocaleLowerCase().includes(query))) return false;
+  if (filterMode.value === "due") return Boolean(task.dueDate) && task.columnId !== "done";
+  if (filterMode.value === "high") return task.priority === "high";
+  if (filterMode.value === "aging") {
+    return task.columnId === "doing" && Boolean(task.startedAt) && Date.now() - Date.parse(task.startedAt!) >= 3 * 86400000;
+  }
+  return true;
+}
+
+function isVisibleTask(task: Task) {
+  return matchesScope(task) && matchesFilters(task);
+}
+
 async function openTask(taskId: string) {
   selectedTaskId.value = taskId;
   await nextTick();
@@ -415,6 +557,57 @@ async function closeTask() {
   }
 }
 
+async function undoDelete() {
+  const pending = recentlyDeleted.value;
+  if (!pending) return;
+  window.clearInterval(undoTimer);
+  recentlyDeleted.value = null;
+  saving.value = true;
+  try {
+    await restoreTask(pending.task.id);
+    await load();
+    announce("已撤回删除");
+  } catch (error) {
+    console.error(error);
+    await load();
+    announce("撤回失败，请从回收站恢复");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function restoreDeletedTask(task: DeletedTask) {
+  saving.value = true;
+  try {
+    await restoreTask(task.id);
+    await load();
+    announce(`已恢复：${task.title}`);
+  } catch (error) {
+    console.error(error);
+    announce("恢复失败，请重试");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function permanentlyDeleteTask(task: DeletedTask) {
+  saving.value = true;
+  try {
+    await deleteTask(task.id);
+    deletedTasks.value = deletedTasks.value.filter((item) => item.id !== task.id);
+    if (recentlyDeleted.value?.task.id === task.id) {
+      window.clearInterval(undoTimer);
+      recentlyDeleted.value = null;
+    }
+    announce("任务已永久删除");
+  } catch (error) {
+    console.error(error);
+    announce("永久删除失败，请重试");
+  } finally {
+    saving.value = false;
+  }
+}
+
 function handleGlobalKeydown(event: KeyboardEvent) {
   const target = event.target as HTMLElement;
   const editing = /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable;
@@ -424,13 +617,24 @@ function handleGlobalKeydown(event: KeyboardEvent) {
     quickInput.value?.select();
     return;
   }
+  if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === "Enter") {
+    event.preventDefault();
+    if (focusedTask.value) pauseFocused(focusedTask.value);
+    else beginFocus();
+    return;
+  }
   if (event.key === "Escape") {
     if (selectedTaskId.value) closeTask();
     else quickInput.value?.focus();
     return;
   }
   if (editing || event.ctrlKey || event.metaKey || event.altKey) return;
-  if (event.key.toLowerCase() === "n") {
+  if (event.key === "/") {
+    event.preventDefault();
+    searchInput.value?.focus();
+  } else if (event.key.toLowerCase() === "d") {
+    dashboardOpen.value = true;
+  } else if (event.key.toLowerCase() === "n") {
     event.preventDefault();
     quickInput.value?.focus();
   } else if (event.key === "ArrowDown") {
@@ -444,16 +648,24 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 
 onMounted(async () => {
   window.addEventListener("keydown", handleGlobalKeydown);
+  unlistenTaskCreated = await listen<string | null>("task-created", handleTaskCreated);
   await load();
-  if (errorMessage.value) return;
   await nextTick();
+  const splash = document.querySelector<HTMLElement>("#startup-splash");
+  if (splash) {
+    splash.setAttribute("aria-hidden", "true");
+    window.setTimeout(() => splash.remove(), 180);
+  }
+  if (errorMessage.value) return;
   startFirstOnboarding();
 });
 
 onBeforeUnmount(() => {
   stopTrashTracking();
   window.removeEventListener("keydown", handleGlobalKeydown);
+  unlistenTaskCreated?.();
   window.clearTimeout(statusTimer);
+  window.clearInterval(undoTimer);
 });
 </script>
 
@@ -502,28 +714,51 @@ onBeforeUnmount(() => {
         :tags="tags"
         :tasks="allTasks"
         :scope="scope"
+        :trash-count="deletedTasks.length"
         @select="selectScope"
         @create-project="openProjectEditor()"
         @edit-project="openProjectEditor"
         @delete-tag="removeTag"
       />
-      <section class="board-workspace" :aria-label="scopeTitle">
+      <TaskTrash
+        v-if="scope.kind === 'trash'"
+        :tasks="deletedTasks"
+        :busy="saving"
+        @restore="restoreDeletedTask"
+        @delete="permanentlyDeleteTask"
+      />
+      <section v-else class="board-workspace" :class="{ 'board-workspace--focused': focusedTask }" :aria-label="scopeTitle">
         <header class="board-context">
           <div>
             <span v-if="activeProject" class="project-dot" :style="{ backgroundColor: activeProject.color }" aria-hidden="true" />
             <h2>{{ scopeTitle }}</h2>
             <span>{{ openTaskCount }} 项未完成</span>
           </div>
-          <button
-            v-if="activeProject"
-            class="text-button"
-            type="button"
-            @click="openProjectEditor(activeProject)"
-          >
-            项目设置
-          </button>
+          <div class="board-tools">
+            <label class="board-search" data-tour="search-filter">
+              <span aria-hidden="true">⌕</span>
+              <input ref="searchInput" v-model="searchQuery" type="search" placeholder="搜索任务 /" aria-label="搜索任务" />
+            </label>
+            <div class="filter-tabs" data-tour="flow-filters" aria-label="任务筛选">
+              <button type="button" :class="{ active: filterMode === 'all' }" @click="filterMode = 'all'">全部</button>
+              <button type="button" :class="{ active: filterMode === 'due' }" @click="filterMode = 'due'">有期限</button>
+              <button type="button" :class="{ active: filterMode === 'high' }" @click="filterMode = 'high'">高优先级</button>
+              <button type="button" :class="{ active: filterMode === 'aging' }" @click="filterMode = 'aging'">长期 WIP</button>
+            </div>
+            <button class="tool-button" data-tour="swimlane" type="button" :aria-pressed="swimlaneMode" @click="swimlaneMode = !swimlaneMode">泳道</button>
+            <button class="tool-button" data-tour="flow-dashboard" type="button" @click="dashboardOpen = true">统计</button>
+            <button class="tool-button tool-button--focus" data-tour="focus-mode" type="button" @click="beginFocus()">开始专注</button>
+            <button v-if="activeProject" class="text-button" type="button" @click="openProjectEditor(activeProject)">项目设置</button>
+          </div>
         </header>
+      <FocusBar
+        :task="focusedTask"
+        @pause="pauseFocused"
+        @done="moveFocused($event, 'verify')"
+        @blocked="moveFocused($event, 'blocked')"
+      />
       <div
+        v-if="!swimlaneMode"
         class="board-columns"
         :class="{ 'board-columns--trash-target': trashActive }"
         aria-label="个人任务墙"
@@ -539,19 +774,51 @@ onBeforeUnmount(() => {
           @task-drop="handleTaskDrop"
           @drag-start="beginTaskDrag(column.id, $event)"
         />
-        <div
-          class="drag-trash"
-          :class="{ 'drag-trash--visible': draggingTask, 'drag-trash--active': trashActive }"
-          data-drag-trash
-          :aria-hidden="!draggingTask"
-          aria-label="拖到这里删除任务"
-        >
-          <svg viewBox="0 0 20 20" aria-hidden="true">
-            <path d="M3.5 5.5h13M8 3.5h4M6 5.5l.6 11h6.8l.6-11M8.2 8.2v5.5M11.8 8.2v5.5" />
-          </svg>
-          <span>拖到这里删除</span>
-        </div>
       </div>
+      <div v-else class="swimlane-board" aria-label="按项目分组的任务墙">
+        <section v-for="lane in swimlanes" :key="lane.id" class="swimlane-row">
+          <header><i :style="{ backgroundColor: lane.color }" /><strong>{{ lane.name }}</strong></header>
+          <div class="swimlane-columns">
+            <BoardColumn
+              v-for="column in lane.columns"
+              :key="`${lane.id}-${column.id}`"
+              :column="column"
+              :selected-task-id="selectedTaskId"
+              :drag-group="`lane-${lane.id}`"
+              @select="openTask"
+              @toggle="toggleTask"
+              @update-tasks="(columnId, tasks) => updateColumnTasks(columnId, tasks, lane.projectId)"
+              @task-drop="handleTaskDrop"
+              @drag-start="beginTaskDrag(column.id, $event)"
+            />
+          </div>
+        </section>
+        <div v-if="!swimlanes.length" class="swimlane-empty">当前筛选下没有任务</div>
+      </div>
+      <button
+        class="drag-trash"
+        :class="{
+          'drag-trash--visible': draggingTask || recentlyDeleted,
+          'drag-trash--active': trashActive,
+          'drag-trash--undo': recentlyDeleted,
+        }"
+        data-drag-trash
+        type="button"
+        :tabindex="recentlyDeleted ? 0 : -1"
+        :aria-disabled="!recentlyDeleted"
+        :aria-hidden="!draggingTask && !recentlyDeleted"
+        :aria-label="recentlyDeleted ? '撤回删除' : '拖到这里删除任务'"
+        @click="recentlyDeleted && undoDelete()"
+      >
+        <span v-if="recentlyDeleted" :key="recentlyDeleted.task.id" class="drag-trash__countdown" aria-hidden="true" />
+        <svg v-if="recentlyDeleted" viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M6.5 6H3.5V3M3.8 6a7 7 0 1 1-.3 7" />
+        </svg>
+        <svg v-else viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M3.5 5.5h13M8 3.5h4M6 5.5l.6 11h6.8l.6-11M8.2 8.2v5.5M11.8 8.2v5.5" />
+        </svg>
+        <span>{{ recentlyDeleted ? `撤回删除 · ${undoSeconds} 秒` : "拖到这里删除" }}</span>
+      </button>
       </section>
       <Transition name="task-drawer">
         <div v-if="selectedTask" class="task-drawer-layer" @click.self="closeTask">
@@ -576,6 +843,8 @@ onBeforeUnmount(() => {
       @close="projectEditorOpen = false"
       @save="persistProject"
     />
+
+    <FlowDashboard :open="dashboardOpen" :metrics="metrics" @close="dashboardOpen = false" />
 
     <div class="sr-status" role="status" aria-live="polite">{{ statusMessage }}</div>
     <Transition name="toast">
