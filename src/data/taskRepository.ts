@@ -1,11 +1,13 @@
 import Database from "@tauri-apps/plugin-sql";
 import type {
+  DeletedTask,
   Project,
   ProjectChanges,
   Tag,
   Task,
   TaskChanges,
   TaskColumn,
+  TaskEvent,
 } from "../types";
 
 const DATABASE_URL = "sqlite:kanboard.db";
@@ -39,6 +41,9 @@ interface TaskRow {
   startedAt: string | null;
   blockedReason: Task["blockedReason"];
   blockedSince: string | null;
+  recurrenceRule: Task["recurrenceRule"];
+  focusStartedAt: string | null;
+  focusElapsedSeconds: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -47,9 +52,21 @@ interface TaskTagRow extends Tag {
   taskId: string;
 }
 
+interface DeletedTaskRow extends TaskRow {
+  deletedAt: string;
+}
+
+interface ChecklistRow {
+  id: string;
+  taskId: string;
+  text: string;
+  completed: number;
+  position: number;
+}
+
 export async function loadTaskWall(): Promise<TaskColumn[]> {
   const db = await database();
-  const [columns, taskRows, taskTags] = await Promise.all([
+  const [columns, taskRows, taskTags, checklistRows] = await Promise.all([
     db.select<ColumnRow[]>(
       "SELECT id, title, position, wip_limit AS wipLimit FROM task_columns ORDER BY position",
     ),
@@ -68,10 +85,14 @@ export async function loadTaskWall(): Promise<TaskColumn[]> {
               t.started_at AS startedAt,
               t.blocked_reason AS blockedReason,
               t.blocked_since AS blockedSince,
+              t.recurrence_rule AS recurrenceRule,
+              t.focus_started_at AS focusStartedAt,
+              t.focus_elapsed_seconds AS focusElapsedSeconds,
               t.created_at AS createdAt,
               t.updated_at AS updatedAt
          FROM tasks t
          LEFT JOIN projects p ON p.id = t.project_id
+        WHERE t.deleted_at IS NULL
         ORDER BY t.position`,
     ),
     db.select<TaskTagRow[]>(
@@ -79,6 +100,11 @@ export async function loadTaskWall(): Promise<TaskColumn[]> {
          FROM task_tags tt
          JOIN tags ON tags.id = tt.tag_id
         ORDER BY tags.name COLLATE NOCASE`,
+    ),
+    db.select<ChecklistRow[]>(
+      `SELECT id, task_id AS taskId, text, completed, position
+         FROM task_checklist_items
+        ORDER BY position`,
     ),
   ]);
 
@@ -90,11 +116,74 @@ export async function loadTaskWall(): Promise<TaskColumn[]> {
     tags: taskTags
       .filter((tag) => tag.taskId === task.id)
       .map(({ id, name }) => ({ id, name })),
+    checklist: checklistRows
+      .filter((item) => item.taskId === task.id)
+      .map((item) => ({ ...item, completed: Boolean(item.completed) })),
   }));
 
   return columns.map((column) => ({
     ...column,
     tasks: tasks.filter((task) => task.columnId === column.id),
+  }));
+}
+
+export async function loadDeletedTasks(): Promise<DeletedTask[]> {
+  const db = await database();
+  const [taskRows, taskTags, checklistRows] = await Promise.all([
+    db.select<DeletedTaskRow[]>(
+      `SELECT t.id,
+              t.column_id AS columnId,
+              t.project_id AS projectId,
+              p.name AS projectName,
+              p.color AS projectColor,
+              t.title,
+              t.description,
+              t.due_date AS dueDate,
+              t.priority,
+              t.position,
+              t.completed_at AS completedAt,
+              t.started_at AS startedAt,
+              t.blocked_reason AS blockedReason,
+              t.blocked_since AS blockedSince,
+              t.recurrence_rule AS recurrenceRule,
+              t.focus_started_at AS focusStartedAt,
+              t.focus_elapsed_seconds AS focusElapsedSeconds,
+              t.created_at AS createdAt,
+              t.updated_at AS updatedAt,
+              t.deleted_at AS deletedAt
+         FROM tasks t
+         LEFT JOIN projects p ON p.id = t.project_id
+        WHERE t.deleted_at IS NOT NULL
+        ORDER BY t.deleted_at DESC`,
+    ),
+    db.select<TaskTagRow[]>(
+      `SELECT tt.task_id AS taskId, tags.id, tags.name
+         FROM task_tags tt
+         JOIN tags ON tags.id = tt.tag_id
+         JOIN tasks t ON t.id = tt.task_id
+        WHERE t.deleted_at IS NOT NULL
+        ORDER BY tags.name COLLATE NOCASE`,
+    ),
+    db.select<ChecklistRow[]>(
+      `SELECT items.id, items.task_id AS taskId, items.text, items.completed, items.position
+         FROM task_checklist_items items
+         JOIN tasks t ON t.id = items.task_id
+        WHERE t.deleted_at IS NOT NULL
+        ORDER BY items.position`,
+    ),
+  ]);
+
+  return taskRows.map((task) => ({
+    ...task,
+    project: task.projectId && task.projectName && task.projectColor
+      ? { id: task.projectId, name: task.projectName, color: task.projectColor }
+      : null,
+    tags: taskTags
+      .filter((tag) => tag.taskId === task.id)
+      .map(({ id, name }) => ({ id, name })),
+    checklist: checklistRows
+      .filter((item) => item.taskId === task.id)
+      .map((item) => ({ ...item, completed: Boolean(item.completed) })),
   }));
 }
 
@@ -139,6 +228,10 @@ export async function createTask(
     startedAt: null,
     blockedReason: null,
     blockedSince: null,
+    checklist: [],
+    recurrenceRule: "none",
+    focusStartedAt: null,
+    focusElapsedSeconds: 0,
     createdAt: now,
     updatedAt: now,
   };
@@ -174,8 +267,9 @@ export async function updateTask(id: string, changes: TaskChanges): Promise<Tag[
               WHEN $1 <> 'blocked' THEN NULL
               ELSE blocked_since
             END,
+            recurrence_rule = $10,
             updated_at = $8
-      WHERE id = $10`,
+      WHERE id = $11`,
     [
       changes.columnId,
       changes.projectId,
@@ -186,9 +280,21 @@ export async function updateTask(id: string, changes: TaskChanges): Promise<Tag[
       completedAt,
       now,
       changes.blockedReason,
+      changes.recurrenceRule,
       id,
     ],
   );
+
+  await db.execute("DELETE FROM task_checklist_items WHERE task_id = $1", [id]);
+  for (const [index, item] of changes.checklist.entries()) {
+    const text = item.text.trim();
+    if (!text) continue;
+    await db.execute(
+      `INSERT INTO task_checklist_items (id, task_id, text, completed, position)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [item.id || crypto.randomUUID(), id, text, item.completed ? 1 : 0, (index + 1) * 1000],
+    );
+  }
 
   await db.execute("DELETE FROM task_tags WHERE task_id = $1", [id]);
   const tags: Tag[] = [];
@@ -324,4 +430,126 @@ export async function saveTaskOrder(columns: TaskColumn[]): Promise<void> {
 export async function deleteTask(id: string): Promise<void> {
   const db = await database();
   await db.execute("DELETE FROM tasks WHERE id = $1", [id]);
+}
+
+export async function trashTask(id: string): Promise<string> {
+  const db = await database();
+  const deletedAt = new Date().toISOString();
+  await db.execute(
+    `UPDATE tasks
+        SET deleted_at = $1, focus_started_at = NULL, updated_at = $1
+      WHERE id = $2`,
+    [deletedAt, id],
+  );
+  return deletedAt;
+}
+
+export async function restoreTask(id: string): Promise<void> {
+  const db = await database();
+  await db.execute(
+    "UPDATE tasks SET deleted_at = NULL, updated_at = $1 WHERE id = $2",
+    [new Date().toISOString(), id],
+  );
+}
+
+export async function loadTaskEvents(): Promise<TaskEvent[]> {
+  const db = await database();
+  return db.select<TaskEvent[]>(
+    `SELECT events.task_id AS taskId, events.from_status AS fromStatus,
+            events.to_status AS toStatus, events.created_at AS createdAt
+       FROM task_events events
+       JOIN tasks ON tasks.id = events.task_id
+      WHERE tasks.deleted_at IS NULL
+       ORDER BY events.created_at`,
+  );
+}
+
+export async function startFocus(task: Task): Promise<void> {
+  const db = await database();
+  const now = new Date().toISOString();
+  await db.execute(
+    `UPDATE tasks
+        SET focus_elapsed_seconds = focus_elapsed_seconds +
+              CASE WHEN focus_started_at IS NULL THEN 0
+                   ELSE CAST((julianday($1) - julianday(focus_started_at)) * 86400 AS INTEGER) END,
+            focus_started_at = NULL
+      WHERE focus_started_at IS NOT NULL`,
+    [now],
+  );
+  if (task.columnId === "ready") {
+    await db.execute(
+      `INSERT INTO task_events (task_id, from_status, to_status, created_at)
+       VALUES ($1, 'ready', 'doing', $2)`,
+      [task.id, now],
+    );
+  }
+  await db.execute(
+    `UPDATE tasks
+        SET column_id = CASE WHEN column_id = 'ready' THEN 'doing' ELSE column_id END,
+            started_at = CASE WHEN column_id = 'ready' THEN $1 ELSE started_at END,
+            focus_started_at = $1,
+            updated_at = $1
+      WHERE id = $2`,
+    [now, task.id],
+  );
+}
+
+export async function pauseFocus(taskId: string): Promise<void> {
+  const db = await database();
+  const now = new Date().toISOString();
+  await db.execute(
+    `UPDATE tasks
+        SET focus_elapsed_seconds = focus_elapsed_seconds +
+              CASE WHEN focus_started_at IS NULL THEN 0
+                   ELSE CAST((julianday($1) - julianday(focus_started_at)) * 86400 AS INTEGER) END,
+            focus_started_at = NULL,
+            updated_at = $1
+      WHERE id = $2`,
+    [now, taskId],
+  );
+}
+
+function nextDueDate(value: string | null, rule: Task["recurrenceRule"]): string | null {
+  if (!value) return null;
+  const date = new Date(`${value}T00:00:00`);
+  if (rule === "daily") date.setDate(date.getDate() + 1);
+  if (rule === "weekly") date.setDate(date.getDate() + 7);
+  if (rule === "monthly") date.setMonth(date.getMonth() + 1);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+export async function createRecurringSuccessor(task: Task): Promise<boolean> {
+  if (task.recurrenceRule === "none") return false;
+  const db = await database();
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const rows = await db.select<Array<{ nextPosition: number }>>(
+    "SELECT COALESCE(MAX(position), 0) + 1000 AS nextPosition FROM tasks WHERE column_id = 'ready'",
+  );
+  await db.execute(
+    `INSERT INTO tasks (
+       id, column_id, project_id, title, description, due_date, priority, position,
+       completed_at, started_at, blocked_reason, blocked_since, recurrence_rule,
+       focus_started_at, focus_elapsed_seconds, created_at, updated_at
+     ) VALUES ($1, 'ready', $2, $3, $4, $5, $6, $7,
+               NULL, NULL, NULL, NULL, $8, NULL, 0, $9, $9)`,
+    [id, task.projectId, task.title, task.description, nextDueDate(task.dueDate, task.recurrenceRule), task.priority, rows[0]?.nextPosition ?? 1000, task.recurrenceRule, now],
+  );
+  await db.execute(
+    "INSERT INTO task_events (task_id, from_status, to_status, created_at) VALUES ($1, NULL, 'ready', $2)",
+    [id, now],
+  );
+  for (const [index, item] of task.checklist.entries()) {
+    await db.execute(
+      `INSERT INTO task_checklist_items (id, task_id, text, completed, position)
+       VALUES ($1, $2, $3, 0, $4)`,
+      [crypto.randomUUID(), id, item.text, (index + 1) * 1000],
+    );
+  }
+  for (const tag of task.tags) {
+    await db.execute("INSERT INTO task_tags (task_id, tag_id) VALUES ($1, $2)", [id, tag.id]);
+  }
+  return true;
 }

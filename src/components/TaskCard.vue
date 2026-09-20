@@ -55,6 +55,10 @@ const dueLabel = computed(() => {
     day: "numeric",
   }).format(date);
 });
+const checklistProgress = computed(() => {
+  if (!props.task.checklist.length) return "";
+  return `${props.task.checklist.filter((item) => item.completed).length}/${props.task.checklist.length}`;
+});
 
 function selectFromKeyboard(event: KeyboardEvent) {
   if (event.key === "Enter" || event.key === " ") {
@@ -96,7 +100,7 @@ function selectFromKeyboard(event: KeyboardEvent) {
       <span v-if="task.tags.length > 2" class="task-card__tag-more">+{{ task.tags.length - 2 }}</span>
     </div>
     <p v-if="task.description" class="task-card__description">{{ task.description }}</p>
-    <div v-if="task.dueDate || task.priority === 'high' || ageLabel" class="task-card__meta">
+    <div v-if="task.dueDate || task.priority === 'high' || ageLabel || checklistProgress || task.recurrenceRule !== 'none'" class="task-card__meta">
       <span v-if="ageLabel" class="task-card__age" :class="{ 'task-card__age--warning': agingWarning }">
         {{ task.columnId === "blocked" ? "阻塞" : "进行" }} · {{ ageLabel }}<template v-if="agingWarning"> ⚠</template>
       </span>
@@ -108,6 +112,8 @@ function selectFromKeyboard(event: KeyboardEvent) {
         {{ dueLabel }}
       </time>
       <span v-if="task.priority === 'high'" class="task-card__priority">高优先级</span>
+      <span v-if="checklistProgress">清单 {{ checklistProgress }}</span>
+      <span v-if="task.recurrenceRule !== 'none'">↻</span>
     </div>
     <p v-if="task.columnId === 'blocked' && task.blockedReason" class="task-card__blocked-reason">
       {{ blockedReasonLabels[task.blockedReason] }}

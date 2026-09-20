@@ -5,9 +5,70 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f8f7f3" />
     <title>看板</title>
+    <style>
+      #startup-splash {
+        position: fixed;
+        z-index: 9999;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: #262724;
+        background: #e8e9e6;
+        font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+        transition: opacity 180ms ease, visibility 180ms ease;
+      }
+
+      #startup-splash[aria-hidden="true"] { visibility: hidden; opacity: 0; }
+      .startup-splash__content { display: grid; width: min(420px, calc(100vw - 64px)); justify-items: center; }
+      .startup-splash__mark { display: grid; grid-template-columns: repeat(4, 9px); align-items: end; gap: 5px; height: 38px; }
+      .startup-splash__mark i { display: block; width: 9px; border-radius: 2px 2px 0 0; background: #285a78; }
+      .startup-splash__mark i:nth-child(1) { height: 15px; opacity: .44; }
+      .startup-splash__mark i:nth-child(2) { height: 24px; opacity: .62; }
+      .startup-splash__mark i:nth-child(3) { height: 32px; opacity: .8; }
+      .startup-splash__mark i:nth-child(4) { height: 38px; }
+      .startup-splash__eyebrow { margin: 22px 0 7px; color: #285a78; font-size: 10px; font-weight: 750; letter-spacing: .16em; }
+      .startup-splash__content h1 { margin: 0; color: #171815; font-size: 28px; letter-spacing: -.04em; }
+      .startup-splash__content p { margin: 10px 0 28px; color: #6f716b; font-size: 13px; }
+      .startup-splash__flow { display: grid; width: 100%; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+      .startup-splash__flow span { padding-top: 8px; border-top: 3px solid #c9cbc6; color: #777973; font-size: 10px; text-align: center; }
+      .startup-splash__flow span:nth-child(2) { border-color: #839a91; }
+      .startup-splash__flow span:nth-child(3) { border-color: #47738b; }
+      .startup-splash__flow span:nth-child(4) { border-color: #285a78; }
+      .startup-splash__progress { position: relative; width: 100%; height: 2px; margin-top: 22px; overflow: hidden; background: #d2d4cf; }
+      .startup-splash__progress::after {
+        position: absolute;
+        width: 34%;
+        height: 100%;
+        background: #285a78;
+        content: "";
+        animation: startup-progress 1.15s ease-in-out infinite;
+      }
+
+      @keyframes startup-progress {
+        from { transform: translateX(-100%); }
+        to { transform: translateX(294%); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #startup-splash { transition: none; }
+        .startup-splash__progress::after { animation: none; left: 33%; }
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>
+    <div id="startup-splash" role="status" aria-live="polite" aria-label="正在准备任务墙">
+      <div class="startup-splash__content">
+        <div class="startup-splash__mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        <span class="startup-splash__eyebrow">PERSONAL FLOW</span>
+        <h1>任务墙</h1>
+        <p>正在整理你的工作流…</p>
+        <div class="startup-splash__flow" aria-hidden="true">
+          <span>收集</span><span>就绪</span><span>进行</span><span>完成</span>
+        </div>
+        <div class="startup-splash__progress" aria-hidden="true"></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

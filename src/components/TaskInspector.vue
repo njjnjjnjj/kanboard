@@ -3,6 +3,7 @@ import { computed, reactive, ref, watch } from "vue";
 import type { BlockedReason, Project, Tag, Task, TaskChanges, TaskColumn } from "../types";
 import DateInput from "./DateInput.vue";
 import TagInput from "./TagInput.vue";
+import TaskChecklist from "./TaskChecklist.vue";
 import TaskSelect from "./TaskSelect.vue";
 
 const props = defineProps<{
@@ -36,6 +37,12 @@ const blockedReasonOptions = [
   { value: "dependency", label: "外部依赖" },
   { value: "other", label: "其他" },
 ];
+const recurrenceOptions = [
+  { value: "none", label: "不重复" },
+  { value: "daily", label: "每天" },
+  { value: "weekly", label: "每周" },
+  { value: "monthly", label: "每月" },
+];
 const projectOptions = computed(() => [
   { value: "", label: "无项目" },
   ...props.projects
@@ -51,6 +58,8 @@ const draft = reactive<TaskChanges>({
   projectId: null,
   tagNames: [],
   blockedReason: null,
+  checklist: [],
+  recurrenceRule: "none",
 });
 
 watch(
@@ -65,6 +74,8 @@ watch(
     draft.projectId = task.projectId;
     draft.tagNames = task.tags.map((tag) => tag.name);
     draft.blockedReason = task.blockedReason;
+    draft.checklist = task.checklist.map((item) => ({ ...item }));
+    draft.recurrenceRule = task.recurrenceRule;
   },
   { immediate: true, deep: true },
 );
@@ -88,6 +99,12 @@ function setProject(value: string) {
 
 function setBlockedReason(value: string) {
   draft.blockedReason = value as BlockedReason;
+}
+
+function setRecurrence(value: string) {
+  if (value === "none" || value === "daily" || value === "weekly" || value === "monthly") {
+    draft.recurrenceRule = value;
+  }
 }
 
 function submitWithShortcut(event: KeyboardEvent) {
@@ -141,6 +158,15 @@ function submitWithShortcut(event: KeyboardEvent) {
           <span>截止时间</span>
           <DateInput v-model="draft.dueDate" label="截止日期" quick />
         </div>
+        <div class="field field--recurrence" data-tour="recurrence">
+          <span>重复</span>
+          <TaskSelect
+            :model-value="draft.recurrenceRule"
+            :options="recurrenceOptions"
+            label="重复规则"
+            @update:model-value="setRecurrence"
+          />
+        </div>
         <div v-if="draft.columnId === 'blocked'" class="field field--blocked-reason">
           <span>阻塞原因</span>
           <TaskSelect
@@ -155,6 +181,11 @@ function submitWithShortcut(event: KeyboardEvent) {
       <div class="field field--tags">
         <span>标签</span>
         <TagInput v-model="draft.tagNames" :suggestions="tags" />
+      </div>
+
+      <div class="field field--checklist" data-tour="checklist">
+        <span>完成条件</span>
+        <TaskChecklist v-model="draft.checklist" />
       </div>
 
       <label class="field field--description">

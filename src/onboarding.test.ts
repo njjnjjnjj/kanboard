@@ -21,13 +21,19 @@ describe("flow onboarding", () => {
     expect(config.steps?.map((step) => step.element)).toEqual([
       "[data-tour='quick-capture']",
       "[data-tour='project-filter']",
+      "[data-tour='search-filter']",
+      "[data-tour='flow-filters']",
       "[data-column='ready']",
       "[data-column='doing']",
       "[data-column='blocked']",
+      "[data-tour='swimlane']",
+      "[data-tour='focus-mode']",
+      undefined,
+      "[data-tour='flow-dashboard']",
       "[data-tour='guide-help']",
     ]);
     expect(config.onDestroyed).toBeTypeOf("function");
     (config.onDestroyed as unknown as () => void)();
-    expect(localStorage.getItem("kanboard.flow-onboarding.v1")).toBe("seen");
+    expect(localStorage.getItem("kanboard.flow-onboarding.v2")).toBe("seen");
   });
 });

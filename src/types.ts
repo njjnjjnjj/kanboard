@@ -1,6 +1,14 @@
 export type Priority = "none" | "high";
 export type ProjectStatus = "active" | "archived";
 export type BlockedReason = "people" | "hardware" | "environment" | "feedback" | "technical" | "dependency" | "other";
+export type RecurrenceRule = "none" | "daily" | "weekly" | "monthly";
+
+export interface ChecklistItem {
+  id: string;
+  text: string;
+  completed: boolean;
+  position: number;
+}
 
 export interface Project {
   id: string;
@@ -33,8 +41,16 @@ export interface Task {
   startedAt: string | null;
   blockedReason: BlockedReason | null;
   blockedSince: string | null;
+  checklist: ChecklistItem[];
+  recurrenceRule: RecurrenceRule;
+  focusStartedAt: string | null;
+  focusElapsedSeconds: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DeletedTask extends Task {
+  deletedAt: string;
 }
 
 export interface TaskColumn {
@@ -55,6 +71,8 @@ export interface TaskChanges {
   projectId: string | null;
   tagNames: string[];
   blockedReason: BlockedReason | null;
+  checklist: ChecklistItem[];
+  recurrenceRule: RecurrenceRule;
 }
 
 export interface ProjectChanges {
@@ -69,4 +87,22 @@ export type TaskScope =
   | { kind: "all" }
   | { kind: "unassigned" }
   | { kind: "project"; id: string }
-  | { kind: "tag"; id: string };
+  | { kind: "tag"; id: string }
+  | { kind: "trash" };
+
+export interface TaskEvent {
+  taskId: string;
+  fromStatus: string | null;
+  toStatus: string;
+  createdAt: string;
+}
+
+export interface FlowMetrics {
+  throughput7d: number;
+  medianCycleHours: number | null;
+  p85CycleHours: number | null;
+  blockedHours30d: number;
+  longWipTasks: Task[];
+  agingBuckets: Array<{ label: string; count: number }>;
+  cfd: Array<{ date: string; counts: Record<string, number> }>;
+}

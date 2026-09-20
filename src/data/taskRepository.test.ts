@@ -11,7 +11,7 @@ vi.mock("@tauri-apps/plugin-sql", () => ({
   },
 }));
 
-import { deleteTag, loadTaskWall, saveTaskOrder, updateTask } from "./taskRepository";
+import { deleteTag, restoreTask, saveTaskOrder, trashTask, updateTask, loadTaskWall } from "./taskRepository";
 
 describe("task repository ordering", () => {
   beforeEach(() => {
@@ -43,6 +43,10 @@ describe("task repository ordering", () => {
             startedAt: null,
             blockedReason: null,
             blockedSince: null,
+            checklist: [],
+            recurrenceRule: "none",
+            focusStartedAt: null,
+            focusElapsedSeconds: 0,
             createdAt: "2026-09-15T00:00:00.000Z",
             updatedAt: "2026-09-15T00:00:00.000Z",
           },
@@ -86,11 +90,15 @@ describe("task project and tag persistence", () => {
           startedAt: null,
           blockedReason: null,
           blockedSince: null,
+          recurrenceRule: "none",
+          focusStartedAt: null,
+          focusElapsedSeconds: 0,
           createdAt: "2026-09-16T00:00:00.000Z",
           updatedAt: "2026-09-16T00:00:00.000Z",
         },
       ])
-      .mockResolvedValueOnce([{ taskId: "task-1", id: "tag-1", name: "开发" }]);
+      .mockResolvedValueOnce([{ taskId: "task-1", id: "tag-1", name: "开发" }])
+      .mockResolvedValueOnce([]);
 
     const columns = await loadTaskWall();
 
@@ -114,6 +122,8 @@ describe("task project and tag persistence", () => {
       projectId: "project-1",
       tagNames: ["开发"],
       blockedReason: null,
+      checklist: [],
+      recurrenceRule: "none",
     });
 
     expect(tags).toEqual([{ id: "tag-1", name: "开发" }]);
@@ -139,6 +149,31 @@ describe("task project and tag persistence", () => {
       2,
       "DELETE FROM tags WHERE id = $1",
       ["tag-1"],
+    );
+  });
+});
+
+describe("task trash persistence", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    database.execute.mockResolvedValue({ rowsAffected: 1 });
+  });
+
+  it("soft deletes and restores a task without removing its record", async () => {
+    const deletedAt = await trashTask("task-1");
+
+    expect(deletedAt).toBeTruthy();
+    expect(database.execute).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("SET deleted_at = $1"),
+      [deletedAt, "task-1"],
+    );
+
+    await restoreTask("task-1");
+    expect(database.execute).toHaveBeenNthCalledWith(
+      2,
+      "UPDATE tasks SET deleted_at = NULL, updated_at = $1 WHERE id = $2",
+      [expect.any(String), "task-1"],
     );
   });
 });
