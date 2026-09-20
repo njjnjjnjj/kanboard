@@ -89,15 +89,6 @@ export function startOnboarding(markSeen = true) {
         },
       },
       {
-        element: "[data-tour='focus-mode']",
-        popover: {
-          title: "Focus 管理此时此刻",
-          description: "先选择一项就绪或进行中的任务，再开始专注。顶部会持续计时，并提供暂停、完成到待验证、转阻塞操作。Ctrl + Shift + Enter 可快速开始或暂停。",
-          side: "bottom",
-          align: "end",
-        },
-      },
-      {
         popover: {
           title: "在任务详情中定义完成",
           description: "打开任意任务，可以添加 Checklist，并设置每天、每周或每月重复。重复任务完成后，下一次任务会自动进入就绪列。保存详情可按 Ctrl + Enter。",

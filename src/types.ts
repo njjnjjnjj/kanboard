@@ -43,8 +43,6 @@ export interface Task {
   blockedSince: string | null;
   checklist: ChecklistItem[];
   recurrenceRule: RecurrenceRule;
-  focusStartedAt: string | null;
-  focusElapsedSeconds: number;
   createdAt: string;
   updatedAt: string;
 }

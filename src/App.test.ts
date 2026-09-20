@@ -28,9 +28,7 @@ const repository = vi.hoisted(() => ({
   saveTaskOrder: vi.fn(),
   updateTask: vi.fn(),
   createRecurringSuccessor: vi.fn(),
-  pauseFocus: vi.fn(),
   restoreTask: vi.fn(),
-  startFocus: vi.fn(),
   trashTask: vi.fn(),
 }));
 
@@ -53,8 +51,6 @@ const existingTask: Task = {
   blockedSince: null,
   checklist: [],
   recurrenceRule: "none",
-  focusStartedAt: null,
-  focusElapsedSeconds: 0,
   createdAt: "2026-09-15T00:00:00.000Z",
   updatedAt: "2026-09-15T00:00:00.000Z",
 };
@@ -81,9 +77,7 @@ describe("personal task wall", () => {
     repository.loadTaskEvents.mockResolvedValue([]);
     repository.loadDeletedTasks.mockResolvedValue([]);
     repository.createRecurringSuccessor.mockResolvedValue(false);
-    repository.pauseFocus.mockResolvedValue(undefined);
     repository.restoreTask.mockResolvedValue(undefined);
-    repository.startFocus.mockResolvedValue(undefined);
     repository.trashTask.mockResolvedValue("2026-09-17T00:00:00.000Z");
     repository.saveTaskOrder.mockResolvedValue(undefined);
     repository.updateTask.mockResolvedValue([]);
@@ -158,6 +152,59 @@ describe("personal task wall", () => {
     wrapper.unmount();
   });
 
+  it("does not show the retired focus mode", async () => {
+    const readyWall = wall();
+    const task = readyWall[0]!.tasks.shift()!;
+    task.columnId = "ready";
+    readyWall[2]!.tasks.push(task);
+    repository.loadTaskWall.mockResolvedValue(readyWall);
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.find("[data-tour='focus-mode']").exists()).toBe(false);
+    expect(wrapper.find(".focus-bar").exists()).toBe(false);
+    const shortcut = new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, shiftKey: true, cancelable: true });
+    window.dispatchEvent(shortcut);
+    expect(shortcut.defaultPrevented).toBe(false);
+    await wrapper.get("[data-task-id='task-1']").trigger("click");
+    expect(wrapper.find(".task-inspector__save .secondary-button").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("switches between details and a full checklist page without losing the draft", async () => {
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+
+    await wrapper.get("[data-task-id='task-1']").trigger("click");
+    await wrapper.get("[data-inspector-description]").setValue("任务背景");
+    expect(wrapper.get("#task-details-tab").attributes("aria-selected")).toBe("true");
+    await wrapper.get("#task-checklist-tab").trigger("click");
+    expect(wrapper.get("#task-checklist-tab").attributes("aria-selected")).toBe("true");
+    expect(wrapper.get("#task-details-panel").attributes("style")).toContain("display: none");
+    await wrapper.get(".task-checklist__add").trigger("click");
+    await flushPromises();
+    const input = wrapper.find<HTMLInputElement>(".task-checklist__item input[type='text']").element;
+    expect(input).not.toBeNull();
+    input.value = "完成验收";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await flushPromises();
+
+    expect(wrapper.get("#task-checklist-tab").text()).toContain("0/1");
+    await wrapper.get("#task-details-tab").trigger("click");
+    expect((wrapper.get("[data-inspector-description]").element as HTMLTextAreaElement).value).toBe("任务背景");
+    await wrapper.get("#task-details-tab").trigger("keydown", { key: "ArrowRight" });
+    await flushPromises();
+    expect(document.activeElement).toBe(wrapper.get("#task-checklist-tab").element);
+    expect(wrapper.find(".task-inspector").exists()).toBe(true);
+    await wrapper.get(".task-inspector__form").trigger("submit");
+    await flushPromises();
+    expect(repository.updateTask).toHaveBeenCalledWith(
+      "task-1", expect.objectContaining({ description: "任务背景", checklist: [expect.objectContaining({ text: "完成验收" })] }),
+    );
+    expect(wrapper.get("#task-checklist-tab").attributes("aria-selected")).toBe("true");
+    wrapper.unmount();
+  });
+
   it("adds a task directly to the project currently in view", async () => {
     repository.loadProjects.mockResolvedValue([
       {
@@ -188,6 +235,24 @@ describe("personal task wall", () => {
 
     expect(repository.createTask).toHaveBeenCalledWith("补充项目筛选", "todo", "project-1");
     expect(wrapper.get("[data-task-id='task-2']").text()).toContain("看板桌面版");
+    expect(wrapper.find(".board-columns").exists()).toBe(true);
+  });
+
+  it("shows full-height columns after switching from swimlanes to a project", async () => {
+    repository.loadProjects.mockResolvedValue([{
+      id: "project-1", name: "看板桌面版", color: "#285a78", description: "", targetDate: null,
+      status: "active", createdAt: "2026-09-16T00:00:00.000Z", updatedAt: "2026-09-16T00:00:00.000Z",
+    }]);
+    const wrapper = mount(App);
+    await flushPromises();
+
+    await wrapper.get("[data-tour='swimlane']").trigger("click");
+    expect(wrapper.find(".swimlane-board").exists()).toBe(true);
+    await wrapper.get(".workspace-nav__section .workspace-nav__row").trigger("click");
+    expect(wrapper.find(".board-columns").exists()).toBe(true);
+    expect(wrapper.find(".swimlane-board").exists()).toBe(false);
+    expect(wrapper.get("[data-tour='swimlane']").attributes("disabled")).toBeDefined();
+    wrapper.unmount();
   });
 
   it("moves a task to completed from its check control", async () => {

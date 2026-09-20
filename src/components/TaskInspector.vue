@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
+import { computed, nextTick, reactive, ref, watch } from "vue";
 import type { BlockedReason, Project, Tag, Task, TaskChanges, TaskColumn } from "../types";
 import DateInput from "./DateInput.vue";
 import TagInput from "./TagInput.vue";
@@ -21,6 +21,7 @@ const emit = defineEmits<{
 }>();
 
 const confirmingDelete = ref(false);
+const activeTab = ref<"details" | "checklist">("details");
 const statusOptions = computed(() =>
   props.columns.map((column) => ({ value: column.id, label: column.title })),
 );
@@ -64,8 +65,9 @@ const draft = reactive<TaskChanges>({
 
 watch(
   () => props.task,
-  (task) => {
+  (task, previousTask) => {
     confirmingDelete.value = false;
+    if (!previousTask || task.id !== previousTask.id) activeTab.value = "details";
     draft.title = task.title;
     draft.description = task.description;
     draft.dueDate = task.dueDate;
@@ -108,10 +110,19 @@ function setRecurrence(value: string) {
 }
 
 function submitWithShortcut(event: KeyboardEvent) {
-  if (event.ctrlKey && event.key === "Enter") {
+  if (event.ctrlKey && !event.shiftKey && event.key === "Enter") {
     event.preventDefault();
     (event.currentTarget as HTMLElement).querySelector("form")?.requestSubmit();
   }
+}
+
+async function handleTabKeydown(event: KeyboardEvent) {
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+  event.preventDefault();
+  const tabList = event.currentTarget as HTMLElement;
+  activeTab.value = event.key === "ArrowRight" ? "checklist" : "details";
+  await nextTick();
+  tabList.querySelector<HTMLButtonElement>(`[aria-selected="true"]`)?.focus();
 }
 </script>
 
@@ -123,7 +134,7 @@ function submitWithShortcut(event: KeyboardEvent) {
           <strong>任务详情</strong>
           <span>{{ columns.find((column) => column.id === draft.columnId)?.title }}</span>
         </div>
-        <button class="icon-button" type="button" aria-label="关闭任务详情" @click="emit('close')">×</button>
+        <button class="icon-button" type="button" aria-label="关闭任务详情" @click="emit('close')"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" /></svg></button>
       </header>
 
       <label class="field field--title">
@@ -131,72 +142,78 @@ function submitWithShortcut(event: KeyboardEvent) {
         <textarea data-inspector-title v-model="draft.title" rows="3" maxlength="160" />
       </label>
 
-      <div class="field-grid field-grid--primary">
-        <div class="field field--project">
-          <span>项目</span>
-          <TaskSelect
-            :model-value="draft.projectId ?? ''"
-            :options="projectOptions"
-            label="项目"
-            @update:model-value="setProject"
-          />
-        </div>
-        <div class="field">
-          <span>状态</span>
-          <TaskSelect v-model="draft.columnId" :options="statusOptions" label="状态" />
-        </div>
-        <div class="field">
-          <span>优先级</span>
-          <TaskSelect
-            :model-value="draft.priority"
-            :options="priorityOptions"
-            label="优先级"
-            @update:model-value="setPriority"
-          />
-        </div>
-        <div class="field field--due">
-          <span>截止时间</span>
-          <DateInput v-model="draft.dueDate" label="截止日期" quick />
-        </div>
-        <div class="field field--recurrence" data-tour="recurrence">
-          <span>重复</span>
-          <TaskSelect
-            :model-value="draft.recurrenceRule"
-            :options="recurrenceOptions"
-            label="重复规则"
-            @update:model-value="setRecurrence"
-          />
-        </div>
-        <div v-if="draft.columnId === 'blocked'" class="field field--blocked-reason">
-          <span>阻塞原因</span>
-          <TaskSelect
-            :model-value="draft.blockedReason ?? 'other'"
-            :options="blockedReasonOptions"
-            label="阻塞原因"
-            @update:model-value="setBlockedReason"
-          />
-        </div>
+      <div class="task-inspector__tabs" role="tablist" aria-label="任务编辑内容" @keydown="handleTabKeydown">
+        <button id="task-details-tab" type="button" role="tab" aria-controls="task-details-panel" :aria-selected="activeTab === 'details'" :tabindex="activeTab === 'details' ? 0 : -1" @click="activeTab = 'details'">任务详情</button>
+        <button id="task-checklist-tab" type="button" role="tab" aria-controls="task-checklist-panel" :aria-selected="activeTab === 'checklist'" :tabindex="activeTab === 'checklist' ? 0 : -1" @click="activeTab = 'checklist'">完成条件 <span>{{ draft.checklist.filter((item) => item.completed).length }}/{{ draft.checklist.length }}</span></button>
       </div>
 
-      <div class="field field--tags">
-        <span>标签</span>
-        <TagInput v-model="draft.tagNames" :suggestions="tags" />
-      </div>
+      <section id="task-details-panel" v-show="activeTab === 'details'" class="task-inspector__panel task-inspector__panel--details" role="tabpanel" aria-labelledby="task-details-tab">
+        <div class="field-grid field-grid--primary">
+          <div class="field field--project">
+            <span>项目</span>
+            <TaskSelect
+              :model-value="draft.projectId ?? ''"
+              :options="projectOptions"
+              label="项目"
+              @update:model-value="setProject"
+            />
+          </div>
+          <div class="field">
+            <span>状态</span>
+            <TaskSelect v-model="draft.columnId" :options="statusOptions" label="状态" />
+          </div>
+          <div class="field">
+            <span>优先级</span>
+            <TaskSelect
+              :model-value="draft.priority"
+              :options="priorityOptions"
+              label="优先级"
+              @update:model-value="setPriority"
+            />
+          </div>
+          <div class="field field--due">
+            <span>截止时间</span>
+            <DateInput v-model="draft.dueDate" label="截止日期" quick />
+          </div>
+          <div class="field field--recurrence" data-tour="recurrence">
+            <span>重复</span>
+            <TaskSelect
+              :model-value="draft.recurrenceRule"
+              :options="recurrenceOptions"
+              label="重复规则"
+              @update:model-value="setRecurrence"
+            />
+          </div>
+          <div v-if="draft.columnId === 'blocked'" class="field field--blocked-reason">
+            <span>阻塞原因</span>
+            <TaskSelect
+              :model-value="draft.blockedReason ?? 'other'"
+              :options="blockedReasonOptions"
+              label="阻塞原因"
+              @update:model-value="setBlockedReason"
+            />
+          </div>
+        </div>
 
-      <div class="field field--checklist" data-tour="checklist">
-        <span>完成条件</span>
+        <div class="field field--tags">
+          <span>标签</span>
+          <TagInput v-model="draft.tagNames" :suggestions="tags" />
+        </div>
+
+        <label class="field field--description">
+          <span>任务说明</span>
+          <textarea
+            data-inspector-description
+            v-model="draft.description"
+            rows="8"
+            placeholder="记录背景、下一步或需要注意的信息"
+          />
+        </label>
+      </section>
+
+      <section id="task-checklist-panel" v-show="activeTab === 'checklist'" class="task-inspector__panel task-inspector__panel--checklist" role="tabpanel" aria-labelledby="task-checklist-tab" data-tour="checklist">
         <TaskChecklist v-model="draft.checklist" />
-      </div>
-
-      <label class="field field--description">
-        <span>任务说明</span>
-        <textarea
-          data-inspector-description
-          v-model="draft.description"
-          rows="8"
-          placeholder="记录背景、下一步或需要注意的信息"
-        />
-      </label>
+      </section>
 
       <footer class="task-inspector__actions">
         <div v-if="confirmingDelete" class="delete-confirmation">

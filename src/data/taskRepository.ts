@@ -1,4 +1,5 @@
 import Database from "@tauri-apps/plugin-sql";
+import { invoke } from "@tauri-apps/api/core";
 import type {
   DeletedTask,
   Project,
@@ -10,12 +11,10 @@ import type {
   TaskEvent,
 } from "../types";
 
-const DATABASE_URL = "sqlite:kanboard.db";
-
 let databasePromise: Promise<Database> | undefined;
 
 function database(): Promise<Database> {
-  databasePromise ??= Database.load(DATABASE_URL);
+  databasePromise ??= invoke<string>("get_database_url").then((url) => Database.load(url));
   return databasePromise;
 }
 
@@ -42,8 +41,6 @@ interface TaskRow {
   blockedReason: Task["blockedReason"];
   blockedSince: string | null;
   recurrenceRule: Task["recurrenceRule"];
-  focusStartedAt: string | null;
-  focusElapsedSeconds: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -86,8 +83,6 @@ export async function loadTaskWall(): Promise<TaskColumn[]> {
               t.blocked_reason AS blockedReason,
               t.blocked_since AS blockedSince,
               t.recurrence_rule AS recurrenceRule,
-              t.focus_started_at AS focusStartedAt,
-              t.focus_elapsed_seconds AS focusElapsedSeconds,
               t.created_at AS createdAt,
               t.updated_at AS updatedAt
          FROM tasks t
@@ -146,8 +141,6 @@ export async function loadDeletedTasks(): Promise<DeletedTask[]> {
               t.blocked_reason AS blockedReason,
               t.blocked_since AS blockedSince,
               t.recurrence_rule AS recurrenceRule,
-              t.focus_started_at AS focusStartedAt,
-              t.focus_elapsed_seconds AS focusElapsedSeconds,
               t.created_at AS createdAt,
               t.updated_at AS updatedAt,
               t.deleted_at AS deletedAt
@@ -230,8 +223,6 @@ export async function createTask(
     blockedSince: null,
     checklist: [],
     recurrenceRule: "none",
-    focusStartedAt: null,
-    focusElapsedSeconds: 0,
     createdAt: now,
     updatedAt: now,
   };
@@ -436,9 +427,7 @@ export async function trashTask(id: string): Promise<string> {
   const db = await database();
   const deletedAt = new Date().toISOString();
   await db.execute(
-    `UPDATE tasks
-        SET deleted_at = $1, focus_started_at = NULL, updated_at = $1
-      WHERE id = $2`,
+    `UPDATE tasks SET deleted_at = $1, updated_at = $1 WHERE id = $2`,
     [deletedAt, id],
   );
   return deletedAt;
@@ -461,51 +450,6 @@ export async function loadTaskEvents(): Promise<TaskEvent[]> {
        JOIN tasks ON tasks.id = events.task_id
       WHERE tasks.deleted_at IS NULL
        ORDER BY events.created_at`,
-  );
-}
-
-export async function startFocus(task: Task): Promise<void> {
-  const db = await database();
-  const now = new Date().toISOString();
-  await db.execute(
-    `UPDATE tasks
-        SET focus_elapsed_seconds = focus_elapsed_seconds +
-              CASE WHEN focus_started_at IS NULL THEN 0
-                   ELSE CAST((julianday($1) - julianday(focus_started_at)) * 86400 AS INTEGER) END,
-            focus_started_at = NULL
-      WHERE focus_started_at IS NOT NULL`,
-    [now],
-  );
-  if (task.columnId === "ready") {
-    await db.execute(
-      `INSERT INTO task_events (task_id, from_status, to_status, created_at)
-       VALUES ($1, 'ready', 'doing', $2)`,
-      [task.id, now],
-    );
-  }
-  await db.execute(
-    `UPDATE tasks
-        SET column_id = CASE WHEN column_id = 'ready' THEN 'doing' ELSE column_id END,
-            started_at = CASE WHEN column_id = 'ready' THEN $1 ELSE started_at END,
-            focus_started_at = $1,
-            updated_at = $1
-      WHERE id = $2`,
-    [now, task.id],
-  );
-}
-
-export async function pauseFocus(taskId: string): Promise<void> {
-  const db = await database();
-  const now = new Date().toISOString();
-  await db.execute(
-    `UPDATE tasks
-        SET focus_elapsed_seconds = focus_elapsed_seconds +
-              CASE WHEN focus_started_at IS NULL THEN 0
-                   ELSE CAST((julianday($1) - julianday(focus_started_at)) * 86400 AS INTEGER) END,
-            focus_started_at = NULL,
-            updated_at = $1
-      WHERE id = $2`,
-    [now, taskId],
   );
 }
 
@@ -532,9 +476,9 @@ export async function createRecurringSuccessor(task: Task): Promise<boolean> {
     `INSERT INTO tasks (
        id, column_id, project_id, title, description, due_date, priority, position,
        completed_at, started_at, blocked_reason, blocked_since, recurrence_rule,
-       focus_started_at, focus_elapsed_seconds, created_at, updated_at
+       created_at, updated_at
      ) VALUES ($1, 'ready', $2, $3, $4, $5, $6, $7,
-               NULL, NULL, NULL, NULL, $8, NULL, 0, $9, $9)`,
+               NULL, NULL, NULL, NULL, $8, $9, $9)`,
     [id, task.projectId, task.title, task.description, nextDueDate(task.dueDate, task.recurrenceRule), task.priority, rows[0]?.nextPosition ?? 1000, task.recurrenceRule, now],
   );
   await db.execute(

@@ -10,6 +10,9 @@ vi.mock("@tauri-apps/plugin-sql", () => ({
     load: vi.fn().mockResolvedValue(database),
   },
 }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn().mockResolvedValue("sqlite:kanboard.db"),
+}));
 
 import { deleteTag, restoreTask, saveTaskOrder, trashTask, updateTask, loadTaskWall } from "./taskRepository";
 
@@ -45,8 +48,6 @@ describe("task repository ordering", () => {
             blockedSince: null,
             checklist: [],
             recurrenceRule: "none",
-            focusStartedAt: null,
-            focusElapsedSeconds: 0,
             createdAt: "2026-09-15T00:00:00.000Z",
             updatedAt: "2026-09-15T00:00:00.000Z",
           },
@@ -91,8 +92,6 @@ describe("task project and tag persistence", () => {
           blockedReason: null,
           blockedSince: null,
           recurrenceRule: "none",
-          focusStartedAt: null,
-          focusElapsedSeconds: 0,
           createdAt: "2026-09-16T00:00:00.000Z",
           updatedAt: "2026-09-16T00:00:00.000Z",
         },

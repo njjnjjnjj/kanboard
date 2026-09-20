@@ -23,13 +23,18 @@ describe("DateInput", () => {
       props: { modelValue: null, label: "截止日期", quick: true, "onUpdate:modelValue": update },
     });
 
-    expect(wrapper.findAll(".date-input__shortcuts button").map((button) => button.text())).toEqual([
+    expect(wrapper.find(".date-picker__shortcuts").exists()).toBe(false);
+    await wrapper.get("[aria-label='打开截止日期选择器']").trigger("click");
+    expect(Array.from(document.querySelectorAll(".date-picker__shortcuts button")).map((button) => button.textContent)).toEqual([
       "今天",
       "明天",
       "后天",
     ]);
-    await wrapper.findAll(".date-input__shortcuts button")[1]!.trigger("click");
+    document.querySelectorAll<HTMLButtonElement>(".date-picker__shortcuts button")[1]!.click();
+    await wrapper.vm.$nextTick();
     expect(update).toHaveBeenCalledWith(expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
+    expect(document.querySelector(".date-picker")).toBeNull();
+    wrapper.unmount();
   });
 
   it("opens the styled calendar and selects a date", async () => {

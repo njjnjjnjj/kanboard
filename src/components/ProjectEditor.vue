@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, watch } from "vue";
+import { reactive, ref, watch } from "vue";
 import type { Project, ProjectChanges } from "../types";
 import DateInput from "./DateInput.vue";
 
@@ -15,6 +15,7 @@ const emit = defineEmits<{
 }>();
 
 const colors = ["#285a78", "#8b4b3d", "#8a651f", "#4f6b51", "#65527c", "#426e70"];
+const customColorActive = ref(false);
 const draft = reactive<ProjectChanges>({
   name: "",
   color: colors[0],
@@ -28,6 +29,7 @@ watch(
   () => {
     draft.name = props.project?.name ?? "";
     draft.color = props.project?.color ?? colors[0];
+    customColorActive.value = !colors.includes(draft.color);
     draft.description = props.project?.description ?? "";
     draft.targetDate = props.project?.targetDate ?? null;
     draft.status = props.project?.status ?? "active";
@@ -57,7 +59,7 @@ function submit() {
           <h2 id="project-editor-title">{{ project ? "编辑项目" : "新建项目" }}</h2>
           <p>项目保存共同背景，任务只记录具体行动。</p>
         </div>
-        <button class="icon-button" type="button" aria-label="关闭项目编辑" @click="emit('close')">×</button>
+        <button class="icon-button" type="button" aria-label="关闭项目编辑" @click="emit('close')"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" /></svg></button>
       </header>
 
       <label class="field">
@@ -67,10 +69,16 @@ function submit() {
 
       <fieldset class="project-color-field">
         <legend>识别色</legend>
-        <label v-for="color in colors" :key="color" :style="{ '--project-color': color }">
-          <input v-model="draft.color" type="radio" name="project-color" :value="color" />
-          <span :aria-label="color" />
-        </label>
+        <div class="project-color-field__choices">
+          <label v-for="color in colors" :key="color" :style="{ '--project-color': color }">
+            <input type="radio" name="project-color" :value="color" :checked="!customColorActive && draft.color === color" :aria-label="`预设颜色 ${color}`" @change="draft.color = color; customColorActive = false" />
+            <span />
+          </label>
+          <label class="project-color-field__custom" :class="{ 'project-color-field__custom--active': customColorActive }" :style="{ '--project-color': draft.color }" @click="customColorActive = true">
+            <input v-model="draft.color" type="color" aria-label="自定义识别色" @input="customColorActive = true" />
+            <span>自定义颜色</span>
+          </label>
+        </div>
       </fieldset>
 
       <label class="field">
