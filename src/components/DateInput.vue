@@ -70,7 +70,7 @@ function positionMenu() {
   const rect = control.value?.getBoundingClientRect();
   if (!rect) return;
   const width = Math.min(292, window.innerWidth - 16);
-  const height = 326;
+  const height = props.quick ? 370 : 326;
   const opensAbove = window.innerHeight - rect.bottom < height + 8 && rect.top > height;
   menuStyle.value = {
     left: `${Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))}px`,
@@ -197,18 +197,6 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div v-if="props.quick" class="date-input__shortcuts" :aria-label="`快速选择${label}`">
-      <button
-        v-for="shortcut in shortcuts"
-        :key="shortcut.value"
-        type="button"
-        :aria-pressed="model === shortcut.value"
-        @click="model = shortcut.value"
-      >
-        {{ shortcut.label }}
-      </button>
-    </div>
-
     <Teleport to="body">
       <div
         v-if="open"
@@ -224,6 +212,15 @@ onBeforeUnmount(() => {
           <strong aria-live="polite">{{ monthLabel }}</strong>
           <button type="button" aria-label="下个月" @click="changeMonth(1)">›</button>
         </header>
+        <div v-if="props.quick" class="date-picker__shortcuts" :aria-label="`快速选择${label}`">
+          <button
+            v-for="shortcut in shortcuts"
+            :key="shortcut.value"
+            type="button"
+            :aria-pressed="model === shortcut.value"
+            @click="chooseDate(shortcut.value)"
+          >{{ shortcut.label }}</button>
+        </div>
         <div class="date-picker__weekdays" aria-hidden="true">
           <span v-for="weekday in ['一', '二', '三', '四', '五', '六', '日']" :key="weekday">{{ weekday }}</span>
         </div>

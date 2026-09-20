@@ -3,7 +3,6 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { listen, type Event, type UnlistenFn } from "@tauri-apps/api/event";
 import BoardColumn from "./components/BoardColumn.vue";
 import FlowDashboard from "./components/FlowDashboard.vue";
-import FocusBar from "./components/FocusBar.vue";
 import ProjectEditor from "./components/ProjectEditor.vue";
 import ProjectSidebar from "./components/ProjectSidebar.vue";
 import TaskInspector from "./components/TaskInspector.vue";
@@ -18,11 +17,9 @@ import {
   loadTags,
   loadTaskEvents,
   loadTaskWall,
-  pauseFocus,
   restoreTask,
   saveTaskOrder,
   saveProject,
-  startFocus,
   trashTask,
   updateTask,
 } from "./data/taskRepository";
@@ -72,7 +69,6 @@ const selectedTask = computed(() => {
 });
 
 const allTasks = computed(() => columns.value.flatMap((column) => column.tasks));
-const focusedTask = computed(() => allTasks.value.find((task) => task.focusStartedAt) ?? null);
 const metrics = computed<FlowMetrics>(() => calculateFlowMetrics(allTasks.value, taskEvents.value));
 
 function matchesScope(task: Task) {
@@ -288,7 +284,6 @@ async function saveChanges(taskId: string, changes: TaskChanges) {
         : null,
       checklist: changes.checklist.map((item, index) => ({ ...item, position: (index + 1) * 1000 })),
       recurrenceRule: changes.recurrenceRule,
-      focusStartedAt: changes.columnId === "done" ? null : task.focusStartedAt,
       updatedAt: new Date().toISOString(),
     });
     for (const tag of savedTags) {
@@ -336,42 +331,9 @@ async function handleTaskCreated(event: Event<string | null>) {
   if (event.payload) await openTask(event.payload);
 }
 
-async function beginFocus(task: Task | null = selectedTask.value) {
-  const target = task ?? columns.value.find((column) => column.id === "ready")?.tasks[0] ?? null;
-  if (!target || !["ready", "doing"].includes(target.columnId)) {
-    announce("请选择就绪或进行中的任务");
-    return;
-  }
-  await startFocus(target);
-  await load();
-  announce(`开始专注：${target.title}`);
-}
-
-async function pauseFocused(task: Task) {
-  await pauseFocus(task.id);
-  await load();
-  announce("专注计时已暂停");
-}
-
-async function moveFocused(task: Task, columnId: "verify" | "blocked") {
-  await saveChanges(task.id, {
-    title: task.title,
-    description: task.description,
-    dueDate: task.dueDate,
-    priority: task.priority,
-    columnId,
-    projectId: task.projectId,
-    tagNames: task.tags.map((tag) => tag.name),
-    blockedReason: columnId === "blocked" ? task.blockedReason ?? "other" : null,
-    checklist: task.checklist,
-    recurrenceRule: task.recurrenceRule,
-  });
-  await pauseFocus(task.id);
-  await load();
-}
-
 function selectScope(nextScope: TaskScope) {
   scope.value = nextScope;
+  if (nextScope.kind === "project") swimlaneMode.value = false;
   if (selectedTask.value && !matchesScope(selectedTask.value)) selectedTaskId.value = null;
 }
 
@@ -617,12 +579,6 @@ function handleGlobalKeydown(event: KeyboardEvent) {
     quickInput.value?.select();
     return;
   }
-  if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === "Enter") {
-    event.preventDefault();
-    if (focusedTask.value) pauseFocused(focusedTask.value);
-    else beginFocus();
-    return;
-  }
   if (event.key === "Escape") {
     if (selectedTaskId.value) closeTask();
     else quickInput.value?.focus();
@@ -727,7 +683,7 @@ onBeforeUnmount(() => {
         @restore="restoreDeletedTask"
         @delete="permanentlyDeleteTask"
       />
-      <section v-else class="board-workspace" :class="{ 'board-workspace--focused': focusedTask }" :aria-label="scopeTitle">
+      <section v-else class="board-workspace" :aria-label="scopeTitle">
         <header class="board-context">
           <div>
             <span v-if="activeProject" class="project-dot" :style="{ backgroundColor: activeProject.color }" aria-hidden="true" />
@@ -745,20 +701,13 @@ onBeforeUnmount(() => {
               <button type="button" :class="{ active: filterMode === 'high' }" @click="filterMode = 'high'">高优先级</button>
               <button type="button" :class="{ active: filterMode === 'aging' }" @click="filterMode = 'aging'">长期 WIP</button>
             </div>
-            <button class="tool-button" data-tour="swimlane" type="button" :aria-pressed="swimlaneMode" @click="swimlaneMode = !swimlaneMode">泳道</button>
+            <button class="tool-button" data-tour="swimlane" type="button" :aria-pressed="swimlaneMode" :disabled="scope.kind === 'project'" @click="swimlaneMode = !swimlaneMode">泳道</button>
             <button class="tool-button" data-tour="flow-dashboard" type="button" @click="dashboardOpen = true">统计</button>
-            <button class="tool-button tool-button--focus" data-tour="focus-mode" type="button" @click="beginFocus()">开始专注</button>
             <button v-if="activeProject" class="text-button" type="button" @click="openProjectEditor(activeProject)">项目设置</button>
           </div>
         </header>
-      <FocusBar
-        :task="focusedTask"
-        @pause="pauseFocused"
-        @done="moveFocused($event, 'verify')"
-        @blocked="moveFocused($event, 'blocked')"
-      />
       <div
-        v-if="!swimlaneMode"
+        v-if="!swimlaneMode || scope.kind === 'project'"
         class="board-columns"
         :class="{ 'board-columns--trash-target': trashActive }"
         aria-label="个人任务墙"

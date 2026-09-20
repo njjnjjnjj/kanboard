@@ -27,7 +27,6 @@ describe("flow onboarding", () => {
       "[data-column='doing']",
       "[data-column='blocked']",
       "[data-tour='swimlane']",
-      "[data-tour='focus-mode']",
       undefined,
       "[data-tour='flow-dashboard']",
       "[data-tour='guide-help']",

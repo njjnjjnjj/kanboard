@@ -36,7 +36,7 @@ function hours(value: number | null) {
     <section class="flow-dashboard" role="dialog" aria-modal="true" aria-label="流动统计">
       <header>
         <div><span>FLOW METRICS</span><h2>流动统计</h2></div>
-        <button class="icon-button" type="button" aria-label="关闭统计" @click="emit('close')">×</button>
+        <button class="icon-button" type="button" aria-label="关闭统计" @click="emit('close')"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" /></svg></button>
       </header>
       <div class="metric-grid">
         <article><span>过去 7 天完成</span><strong>{{ metrics.throughput7d }}</strong><small>项任务</small></article>
