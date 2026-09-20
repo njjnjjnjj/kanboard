@@ -1014,6 +1014,21 @@ kbd {
 .project-color-field__custom--active input { box-shadow: 0 0 0 2px #f7f7f3, 0 0 0 4px var(--project-color); }
 .project-color-field__custom input:focus-visible { outline: 2px solid var(--active-border); outline-offset: 2px; }
 
+.settings-backdrop { position: fixed; z-index: 210; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(32, 33, 30, .35); }
+.settings-panel { width: min(540px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow: auto; padding: 0 22px 20px; border: 1px solid #aaa9a2; border-radius: 9px; background: #f7f7f3; box-shadow: 0 24px 70px rgba(24, 27, 25, .24); }
+.settings-panel > header { display: flex; align-items: flex-start; justify-content: space-between; margin: 0 -8px 0 0; padding: 21px 0 16px; border-bottom: 1px solid var(--line-soft); }
+.settings-panel h2 { margin: 0; color: var(--ink-strong); font-size: 18px; }
+.settings-panel header p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+.settings-panel__body > section { padding: 18px 0; border-bottom: 1px solid var(--line-soft); }
+.settings-panel__body > section:last-child { border-bottom: 0; }
+.settings-panel h3 { margin: 0 0 6px; color: var(--ink-strong); font-size: 14px; }
+.settings-panel__body p { margin: 0 0 12px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.settings-panel__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.settings-panel__path { display: block; padding: 10px 12px; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: 5px; background: #fffefa; font-size: 12px; }
+.settings-panel small { display: block; margin-top: 9px; color: var(--faint); font-size: 12px; }
+.settings-panel__version p { margin-bottom: 0; }
+.settings-panel__message { margin: 0; padding: 10px 12px; border-radius: 5px; color: var(--ink); background: var(--accent-soft); font-size: 12px; overflow-wrap: anywhere; }
+
 .drag-trash {
   position: absolute;
   bottom: 16px;

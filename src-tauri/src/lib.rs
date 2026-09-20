@@ -1,4 +1,4 @@
-use tauri_plugin_sql::{Migration, MigrationKind};
+mod storage;
 
 #[cfg(desktop)]
 use tauri::{
@@ -46,39 +46,6 @@ fn show_quick_capture(app: &AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let migrations = vec![
-        Migration {
-            version: 1,
-            description: "create_personal_task_wall",
-            sql: include_str!("../migrations/0001_initial.sql"),
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 2,
-            description: "add_projects_and_tags",
-            sql: include_str!("../migrations/0002_projects_and_tags.sql"),
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 3,
-            description: "add_flow_workflow",
-            sql: include_str!("../migrations/0003_flow_workflow.sql"),
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 4,
-            description: "add_v2_productivity",
-            sql: include_str!("../migrations/0004_v2_productivity.sql"),
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 5,
-            description: "add_task_trash",
-            sql: include_str!("../migrations/0005_task_trash.sql"),
-            kind: MigrationKind::Up,
-        },
-    ];
-
     let mut builder = tauri::Builder::default();
 
     #[cfg(desktop)]
@@ -105,6 +72,7 @@ pub fn run() {
                     .build(),
             )
             .setup(move |app| {
+                app.manage(storage::initialize(app.handle()).map_err(std::io::Error::other)?);
                 let open_handle = app.handle().clone();
                 app.listen("open-main-window", move |_| show_main_window(&open_handle));
 
@@ -160,11 +128,15 @@ pub fn run() {
     }
 
     builder
-        .plugin(
-            tauri_plugin_sql::Builder::default()
-                .add_migrations("sqlite:kanboard.db", migrations)
-                .build(),
-        )
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_sql::Builder::default().build())
+        .invoke_handler(tauri::generate_handler![
+            storage::get_storage_info,
+            storage::get_database_url,
+            storage::export_data,
+            storage::import_data,
+            storage::move_storage,
+        ])
         .run(tauri::generate_context!())
         .expect("failed to run kanboard application");
 }

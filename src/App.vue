@@ -5,6 +5,7 @@ import BoardColumn from "./components/BoardColumn.vue";
 import FlowDashboard from "./components/FlowDashboard.vue";
 import ProjectEditor from "./components/ProjectEditor.vue";
 import ProjectSidebar from "./components/ProjectSidebar.vue";
+import SettingsPanel from "./components/SettingsPanel.vue";
 import TaskInspector from "./components/TaskInspector.vue";
 import TaskTrash from "./components/TaskTrash.vue";
 import {
@@ -41,6 +42,7 @@ const searchQuery = ref("");
 const filterMode = ref<"all" | "due" | "high" | "aging">("all");
 const swimlaneMode = ref(false);
 const dashboardOpen = ref(false);
+const settingsOpen = ref(false);
 const taskEvents = ref<TaskEvent[]>([]);
 const deletedTasks = ref<DeletedTask[]>([]);
 const recentlyDeleted = ref<{ task: Task; deletedAt: string } | null>(null);
@@ -654,6 +656,7 @@ onBeforeUnmount(() => {
           :disabled="loading || Boolean(errorMessage)"
           @click="startOnboarding()"
         >使用引导</button>
+        <button class="text-button guide-button" type="button" @click="settingsOpen = true">设置</button>
         <div class="capture-shortcut" aria-hidden="true"><kbd>Ctrl K</kbd><span>快速记录</span></div>
       </div>
     </header>
@@ -794,6 +797,7 @@ onBeforeUnmount(() => {
     />
 
     <FlowDashboard :open="dashboardOpen" :metrics="metrics" @close="dashboardOpen = false" />
+    <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" />
 
     <div class="sr-status" role="status" aria-live="polite">{{ statusMessage }}</div>
     <Transition name="toast">

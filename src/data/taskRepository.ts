@@ -1,4 +1,5 @@
 import Database from "@tauri-apps/plugin-sql";
+import { invoke } from "@tauri-apps/api/core";
 import type {
   DeletedTask,
   Project,
@@ -10,12 +11,10 @@ import type {
   TaskEvent,
 } from "../types";
 
-const DATABASE_URL = "sqlite:kanboard.db";
-
 let databasePromise: Promise<Database> | undefined;
 
 function database(): Promise<Database> {
-  databasePromise ??= Database.load(DATABASE_URL);
+  databasePromise ??= invoke<string>("get_database_url").then((url) => Database.load(url));
   return databasePromise;
 }
 

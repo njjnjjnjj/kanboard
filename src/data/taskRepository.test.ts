@@ -10,6 +10,9 @@ vi.mock("@tauri-apps/plugin-sql", () => ({
     load: vi.fn().mockResolvedValue(database),
   },
 }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn().mockResolvedValue("sqlite:kanboard.db"),
+}));
 
 import { deleteTag, restoreTask, saveTaskOrder, trashTask, updateTask, loadTaskWall } from "./taskRepository";
 

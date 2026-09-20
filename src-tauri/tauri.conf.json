@@ -38,9 +38,5 @@
       }
     }
   },
-  "plugins": {
-    "sql": {
-      "preload": ["sqlite:kanboard.db"]
-    }
-  }
+  "plugins": {}
 }
