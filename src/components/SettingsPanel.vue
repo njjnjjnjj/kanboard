@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { confirm, open as openDialog, save } from "@tauri-apps/plugin-dialog";
 
 const props = defineProps<{ open: boolean }>();
@@ -14,15 +15,25 @@ interface StorageInfo {
 
 const info = ref<StorageInfo | null>(null);
 const busy = ref(false);
+const autostartEnabled = ref(false);
+const autostartLoading = ref(false);
 const message = ref("");
 
 watch(() => props.open, async (visible) => {
   if (!visible) return;
   message.value = "";
+  autostartLoading.value = true;
   try {
     info.value = await invoke<StorageInfo>("get_storage_info");
   } catch (error) {
     message.value = `无法读取设置：${String(error)}`;
+  }
+  try {
+    autostartEnabled.value = await isEnabled();
+  } catch (error) {
+    message.value = `无法读取开机自启状态：${String(error)}`;
+  } finally {
+    autostartLoading.value = false;
   }
 }, { immediate: true });
 
@@ -83,6 +94,24 @@ function changeDirectory() {
     if (updated.path !== info.value?.path) window.location.reload();
   });
 }
+
+async function toggleAutostart() {
+  if (autostartLoading.value) return;
+  autostartLoading.value = true;
+  message.value = "";
+  try {
+    if (autostartEnabled.value) {
+      await disable();
+    } else {
+      await enable();
+    }
+    autostartEnabled.value = await isEnabled();
+  } catch (error) {
+    message.value = `无法更新开机自启：${String(error)}`;
+  } finally {
+    autostartLoading.value = false;
+  }
+}
 </script>
 
 <template>
@@ -94,6 +123,26 @@ function changeDirectory() {
       </header>
 
       <div class="settings-panel__body">
+        <section>
+          <div class="settings-panel__toggle-row">
+            <div>
+              <h3>开机自启</h3>
+              <p>登录系统后自动启动看板。</p>
+            </div>
+            <button
+              class="settings-toggle"
+              type="button"
+              role="switch"
+              :aria-checked="autostartEnabled"
+              :aria-label="autostartEnabled ? '关闭开机自启' : '开启开机自启'"
+              :disabled="autostartLoading"
+              @click="toggleAutostart"
+            >
+              <span aria-hidden="true"></span>
+            </button>
+          </div>
+        </section>
+
         <section>
           <h3>数据备份</h3>
           <p>将任务、项目、标签及相关记录导出为 SQLite 文件，或从备份恢复。</p>

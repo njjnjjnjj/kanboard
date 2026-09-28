@@ -57,6 +57,7 @@ pub fn run() {
         let handler_shortcut = quick_shortcut.clone();
 
         builder = builder
+            .plugin(tauri_plugin_autostart::Builder::new().build())
             .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
                 show_main_window(app);
             }))
