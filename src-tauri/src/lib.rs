@@ -1,3 +1,4 @@
+mod mcp;
 mod storage;
 
 #[cfg(desktop)]
@@ -73,7 +74,12 @@ pub fn run() {
                     .build(),
             )
             .setup(move |app| {
-                app.manage(storage::initialize(app.handle()).map_err(std::io::Error::other)?);
+                let storage = storage::initialize(app.handle()).map_err(std::io::Error::other)?;
+                let database_path = storage::current_path_handle(&storage);
+                app.manage(storage);
+                let mcp = tauri::async_runtime::block_on(mcp::initialize(app.handle(), database_path))
+                    .map_err(std::io::Error::other)?;
+                app.manage(mcp);
                 let open_handle = app.handle().clone();
                 app.listen("open-main-window", move |_| show_main_window(&open_handle));
 
@@ -137,6 +143,9 @@ pub fn run() {
             storage::export_data,
             storage::import_data,
             storage::move_storage,
+            mcp::get_mcp_status,
+            mcp::set_mcp_enabled,
+            mcp::connect_codex,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run kanboard application");

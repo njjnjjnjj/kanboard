@@ -1032,6 +1032,10 @@ kbd {
 .settings-toggle[aria-checked="true"] span { transform: translateX(16px); }
 .settings-toggle:focus-visible { outline: 2px solid var(--active-border); outline-offset: 2px; }
 .settings-toggle:disabled { cursor: wait; opacity: .58; }
+.settings-panel__service-status { display: flex; align-items: center; gap: 7px; margin-top: 13px; color: var(--muted); font-size: 12px; }
+.settings-panel__service-status > span:first-child { width: 7px; height: 7px; border-radius: 50%; background: #aaa9a2; }
+.settings-panel__service-status.is-running > span:first-child { background: var(--accent); }
+.settings-panel__service-error { margin-top: 8px !important; color: var(--danger) !important; }
 .settings-panel__path { display: block; padding: 10px 12px; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: 5px; background: #fffefa; font-size: 12px; }
 .settings-panel small { display: block; margin-top: 9px; color: var(--faint); font-size: 12px; }
 .settings-panel__version p { margin-bottom: 0; }
