@@ -19,7 +19,7 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{sqlite::SqliteConnectOptions, Row, SqlitePool};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::{net::TcpListener, sync::Mutex as AsyncMutex, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
@@ -50,6 +50,7 @@ struct McpController {
 }
 
 pub struct McpState {
+    app: Option<AppHandle>,
     settings_path: PathBuf,
     database_path: Arc<Mutex<PathBuf>>,
     controller: AsyncMutex<McpController>,
@@ -126,10 +127,11 @@ impl McpState {
             .map_err(|error| format!("无法启动 MCP 服务：{error}"))?;
         let cancellation = CancellationToken::new();
         let database_path = self.database_path.clone();
+        let app = self.app.clone();
         let service_cancellation = cancellation.child_token();
         let shutdown = cancellation.clone();
         let service = StreamableHttpService::new(
-            move || Ok(KanboardMcp::new(database_path.clone())),
+            move || Ok(KanboardMcp::new(database_path.clone(), app.clone())),
             LocalSessionManager::default().into(),
             StreamableHttpServerConfig::default()
                 .with_json_response(true)
@@ -180,6 +182,7 @@ pub async fn initialize(
         McpSettings::default()
     };
     let state = McpState {
+        app: Some(app.clone()),
         settings_path,
         database_path,
         controller: AsyncMutex::new(McpController {
@@ -335,6 +338,7 @@ fn mcp_error(value: impl std::fmt::Display) -> rmcp::ErrorData {
 #[derive(Clone)]
 struct KanboardMcp {
     database_path: Arc<Mutex<PathBuf>>,
+    app: Option<AppHandle>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -381,6 +385,54 @@ struct EventsInput {
     limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct UpdateTaskStatusInput {
+    /// Stable task id.
+    task_id: String,
+    /// Target column/status id, for example ready, doing, blocked, verify, or done.
+    status: String,
+    /// Reason category when moving to blocked: people, hardware, environment, feedback, technical, dependency, other.
+    reason: Option<String>,
+    /// Optional comment explaining the transition.
+    comment: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SetTaskBlockedInput {
+    /// Stable task id.
+    task_id: String,
+    /// Reason category for the block: technical, dependency, environment, feedback, people, hardware, other.
+    reason: String,
+    /// Detailed description of the error, failure, missing dependency, or required human action.
+    detail: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct UpdateChecklistItemInput {
+    /// Stable task id.
+    task_id: String,
+    /// Stable checklist item id.
+    item_id: String,
+    /// Completion state.
+    completed: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct AppendTaskNotesInput {
+    /// Stable task id.
+    task_id: String,
+    /// Progress notes, execution results, or error details to append to the task description.
+    notes: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SetProjectPathInput {
+    /// Stable project id.
+    project_id: String,
+    /// Absolute local filesystem directory path of the project/repository.
+    path: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TagData {
@@ -403,6 +455,7 @@ struct ProjectRef {
     id: String,
     name: String,
     color: String,
+    path: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -438,12 +491,34 @@ struct EventData {
     created_at: String,
 }
 
-#[tool_router(server_handler)]
 impl KanboardMcp {
-    fn new(database_path: Arc<Mutex<PathBuf>>) -> Self {
-        Self { database_path }
+    fn new(database_path: Arc<Mutex<PathBuf>>, app: Option<AppHandle>) -> Self {
+        Self { database_path, app }
     }
 
+    fn emit_task_updated(&self) {
+        if let Some(app) = &self.app {
+            let _ = app.emit("mcp:task-updated", ());
+        }
+    }
+
+    fn emit_task_blocked(&self, task_id: &str, title: &str, reason: &str, detail: &str) {
+        if let Some(app) = &self.app {
+            let _ = app.emit(
+                "mcp:task-blocked",
+                json!({
+                    "taskId": task_id,
+                    "title": title,
+                    "reason": reason,
+                    "detail": detail
+                }),
+            );
+        }
+    }
+}
+
+#[tool_router(server_handler)]
+impl KanboardMcp {
     async fn pool(&self) -> Result<SqlitePool, rmcp::ErrorData> {
         let path = self
             .database_path
@@ -452,11 +527,11 @@ impl KanboardMcp {
             .clone();
         let options = SqliteConnectOptions::new()
             .filename(path)
-            .read_only(true);
+            .busy_timeout(std::time::Duration::from_secs(5));
         SqlitePool::connect_with(options).await.map_err(mcp_error)
     }
 
-    #[tool(description = "Read the current high-signal Kanboard overview: counts by status, overdue and due-soon work, high-priority and blocked tasks, WIP limit violations, and active project counts. This tool is read-only.")]
+    #[tool(description = "Read the current high-signal Kanboard overview: counts by status, overdue and due-soon work, high-priority and blocked tasks, WIP limit violations, and active project counts.")]
     async fn get_dashboard_summary(&self) -> Result<CallToolResult, rmcp::ErrorData> {
         let pool = self.pool().await?;
         let tasks = load_tasks(&pool, false).await.map_err(mcp_error)?;
@@ -518,7 +593,7 @@ impl KanboardMcp {
         }))
     }
 
-    #[tool(description = "List current Kanboard tasks with optional status, project, tag, priority, due-date, and deleted-task filters. Results are ordered by board position and capped. This tool is read-only.")]
+    #[tool(description = "List current Kanboard tasks with optional status, project, tag, priority, due-date, and deleted-task filters. Results are ordered by board position and capped.")]
     async fn list_tasks(
         &self,
         Parameters(input): Parameters<ListTasksInput>,
@@ -538,7 +613,7 @@ impl KanboardMcp {
         structured(json!({ "total": total, "tasks": tasks }))
     }
 
-    #[tool(description = "Get one Kanboard task by stable id, including project, tags, checklist, deletion state, and complete status-event history. This tool is read-only.")]
+    #[tool(description = "Get one Kanboard task by stable id, including project (with local path), tags, checklist, deletion state, and complete status-event history.")]
     async fn get_task(
         &self,
         Parameters(input): Parameters<TaskIdInput>,
@@ -556,7 +631,7 @@ impl KanboardMcp {
         structured(json!({ "task": task, "events": events }))
     }
 
-    #[tool(description = "Search task titles and descriptions using case-insensitive text matching. Can include the recycle bin. This tool is read-only.")]
+    #[tool(description = "Search task titles and descriptions using case-insensitive text matching. Can include the recycle bin.")]
     async fn search_tasks(
         &self,
         Parameters(input): Parameters<SearchTasksInput>,
@@ -577,7 +652,7 @@ impl KanboardMcp {
         structured(json!({ "query": input.query, "total": total, "tasks": tasks }))
     }
 
-    #[tool(description = "List Kanboard projects with descriptions, target dates, lifecycle state, and active task counts by status. This tool is read-only.")]
+    #[tool(description = "List Kanboard projects with descriptions, local repository path, target dates, lifecycle state, and active task counts by status.")]
     async fn list_projects(&self) -> Result<CallToolResult, rmcp::ErrorData> {
         let pool = self.pool().await?;
         let projects = load_projects(&pool).await.map_err(mcp_error)?;
@@ -585,7 +660,7 @@ impl KanboardMcp {
         structured(json!({ "projects": projects }))
     }
 
-    #[tool(description = "List all Kanboard tags with active task counts. This tool is read-only.")]
+    #[tool(description = "List all Kanboard tags with active task counts.")]
     async fn list_tags(&self) -> Result<CallToolResult, rmcp::ErrorData> {
         let pool = self.pool().await?;
         let rows = sqlx::query(
@@ -602,7 +677,7 @@ impl KanboardMcp {
         structured(json!({ "tags": tags }))
     }
 
-    #[tool(description = "List status transition events for one task or recent events across active tasks. This tool is read-only.")]
+    #[tool(description = "List status transition events for one task or recent events across active tasks.")]
     async fn list_task_events(
         &self,
         Parameters(input): Parameters<EventsInput>,
@@ -616,13 +691,293 @@ impl KanboardMcp {
         structured(json!({ "events": events }))
     }
 
-    #[tool(description = "Calculate the current 7-day throughput, cycle-time percentiles, 30-day blocked hours, WIP aging, long-running WIP, and 14-day cumulative-flow counts. This tool is read-only.")]
+    #[tool(description = "Calculate the current 7-day throughput, cycle-time percentiles, 30-day blocked hours, WIP aging, long-running WIP, and 14-day cumulative-flow counts.")]
     async fn get_flow_metrics(&self) -> Result<CallToolResult, rmcp::ErrorData> {
         let pool = self.pool().await?;
         let tasks = load_tasks(&pool, false).await.map_err(mcp_error)?;
         let events = load_events(&pool, None, 100_000).await.map_err(mcp_error)?;
         pool.close().await;
         structured(flow_metrics(&tasks, &events))
+    }
+
+    #[tool(description = "Update a task's status/column (e.g. ready, doing, blocked, verify, done). Automatically updates started_at, completed_at, records a status transition event, and notifies the desktop app.")]
+    async fn update_task_status(
+        &self,
+        Parameters(input): Parameters<UpdateTaskStatusInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let now = Utc::now().to_rfc3339();
+
+        let Some(task) = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)? else {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params("找不到任务", None));
+        };
+
+        let columns = load_columns(&pool).await.map_err(mcp_error)?;
+        if !columns.iter().any(|c| c.id == input.status) {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params(format!("无效的状态列: {}", input.status), None));
+        }
+
+        let is_done = input.status == "done";
+        let is_doing = input.status == "doing";
+        let is_blocked = input.status == "blocked";
+
+        let completed_at: Option<String> = if is_done {
+            Some(task.completed_at.clone().unwrap_or_else(|| now.clone()))
+        } else {
+            None
+        };
+
+        let started_at: Option<String> = if is_doing {
+            Some(task.started_at.clone().unwrap_or_else(|| now.clone()))
+        } else if task.column_id == "doing" {
+            task.started_at.clone()
+        } else {
+            task.started_at.clone()
+        };
+
+        let blocked_reason: Option<String> = if is_blocked {
+            Some(input.reason.clone().unwrap_or_else(|| task.blocked_reason.clone().unwrap_or_else(|| "other".to_string())))
+        } else {
+            None
+        };
+
+        let blocked_since: Option<String> = if is_blocked {
+            Some(if task.column_id == "blocked" {
+                task.blocked_since.clone().unwrap_or_else(|| now.clone())
+            } else {
+                now.clone()
+            })
+        } else {
+            None
+        };
+
+        let updated_desc = if let Some(comment) = &input.comment {
+            let trimmed = comment.trim();
+            if !trimmed.is_empty() {
+                if task.description.trim().is_empty() {
+                    trimmed.to_string()
+                } else {
+                    format!("{}\n\n[{}] {}", task.description.trim(), &now[0..19].replace('T', " "), trimmed)
+                }
+            } else {
+                task.description.clone()
+            }
+        } else {
+            task.description.clone()
+        };
+
+        sqlx::query(
+            "UPDATE tasks SET column_id = ?, completed_at = ?, started_at = ?, blocked_reason = ?, blocked_since = ?, description = ?, updated_at = ? WHERE id = ?"
+        )
+        .bind(&input.status)
+        .bind(&completed_at)
+        .bind(&started_at)
+        .bind(&blocked_reason)
+        .bind(&blocked_since)
+        .bind(&updated_desc)
+        .bind(&now)
+        .bind(&input.task_id)
+        .execute(&pool)
+        .await
+        .map_err(mcp_error)?;
+
+        if task.column_id != input.status {
+            sqlx::query(
+                "INSERT INTO task_events (task_id, from_status, to_status, created_at) VALUES (?, ?, ?, ?)"
+            )
+            .bind(&input.task_id)
+            .bind(&task.column_id)
+            .bind(&input.status)
+            .bind(&now)
+            .execute(&pool)
+            .await
+            .map_err(mcp_error)?;
+        }
+
+        let updated_task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
+        pool.close().await;
+
+        self.emit_task_updated();
+        if is_blocked {
+            let reason_str = blocked_reason.as_deref().unwrap_or("other");
+            let detail_str = input.comment.as_deref().unwrap_or("已移动到阻塞");
+            self.emit_task_blocked(&input.task_id, &task.title, reason_str, detail_str);
+        }
+
+        structured(json!({ "task": updated_task }))
+    }
+
+    #[tool(description = "Move a task to the blocked column due to an exception, failure, missing dependency, or need for human assistance. Records structured error context and notifies the user.")]
+    async fn set_task_blocked(
+        &self,
+        Parameters(input): Parameters<SetTaskBlockedInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let now = Utc::now().to_rfc3339();
+
+        let Some(task) = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)? else {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params("找不到任务", None));
+        };
+
+        let reason = input.reason.trim().to_lowercase();
+        let detail = input.detail.trim();
+        if detail.is_empty() {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params("阻塞详情不能为空", None));
+        }
+
+        let banner = format!(
+            "\n\n> [!WARNING] 阻塞异常记录 ({})\n> **原因类型**: `{}`\n> **阻塞详情**: {}",
+            &now[0..19].replace('T', " "),
+            reason,
+            detail
+        );
+        let new_description = if task.description.trim().is_empty() {
+            banner.trim_start().to_string()
+        } else {
+            format!("{}{}", task.description.trim(), banner)
+        };
+
+        sqlx::query(
+            "UPDATE tasks SET column_id = 'blocked', blocked_reason = ?, blocked_since = ?, description = ?, updated_at = ? WHERE id = ?"
+        )
+        .bind(&reason)
+        .bind(&now)
+        .bind(&new_description)
+        .bind(&now)
+        .bind(&input.task_id)
+        .execute(&pool)
+        .await
+        .map_err(mcp_error)?;
+
+        if task.column_id != "blocked" {
+            sqlx::query(
+                "INSERT INTO task_events (task_id, from_status, to_status, created_at) VALUES (?, ?, 'blocked', ?)"
+            )
+            .bind(&input.task_id)
+            .bind(&task.column_id)
+            .bind(&now)
+            .execute(&pool)
+            .await
+            .map_err(mcp_error)?;
+        }
+
+        let updated_task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
+        pool.close().await;
+
+        self.emit_task_updated();
+        self.emit_task_blocked(&input.task_id, &task.title, &reason, detail);
+
+        structured(json!({ "task": updated_task, "blocked": true }))
+    }
+
+    #[tool(description = "Mark a task checklist item as completed (true) or pending (false).")]
+    async fn update_checklist_item(
+        &self,
+        Parameters(input): Parameters<UpdateChecklistItemInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let now = Utc::now().to_rfc3339();
+
+        let res = sqlx::query(
+            "UPDATE task_checklist_items SET completed = ? WHERE id = ? AND task_id = ?"
+        )
+        .bind(if input.completed { 1i64 } else { 0i64 })
+        .bind(&input.item_id)
+        .bind(&input.task_id)
+        .execute(&pool)
+        .await
+        .map_err(mcp_error)?;
+
+        if res.rows_affected() == 0 {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params("找不到检查项或任务不匹配", None));
+        }
+
+        sqlx::query("UPDATE tasks SET updated_at = ? WHERE id = ?")
+            .bind(&now)
+            .bind(&input.task_id)
+            .execute(&pool)
+            .await
+            .map_err(mcp_error)?;
+
+        let updated_task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
+        pool.close().await;
+
+        self.emit_task_updated();
+        structured(json!({ "task": updated_task }))
+    }
+
+    #[tool(description = "Append timestamped progress notes, execution logs, or comments to a task description.")]
+    async fn append_task_notes(
+        &self,
+        Parameters(input): Parameters<AppendTaskNotesInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let now = Utc::now().to_rfc3339();
+
+        let Some(task) = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)? else {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params("找不到任务", None));
+        };
+
+        let trimmed = input.notes.trim();
+        if trimmed.is_empty() {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params("内容不能为空", None));
+        }
+
+        let new_desc = if task.description.trim().is_empty() {
+            trimmed.to_string()
+        } else {
+            format!("{}\n\n[{}] {}", task.description.trim(), &now[0..19].replace('T', " "), trimmed)
+        };
+
+        sqlx::query("UPDATE tasks SET description = ?, updated_at = ? WHERE id = ?")
+            .bind(&new_desc)
+            .bind(&now)
+            .bind(&input.task_id)
+            .execute(&pool)
+            .await
+            .map_err(mcp_error)?;
+
+        let updated_task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
+        pool.close().await;
+
+        self.emit_task_updated();
+        structured(json!({ "task": updated_task }))
+    }
+
+    #[tool(description = "Set or update the local repository / workspace directory path for a project.")]
+    async fn set_project_path(
+        &self,
+        Parameters(input): Parameters<SetProjectPathInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let now = Utc::now().to_rfc3339();
+
+        let res = sqlx::query("UPDATE projects SET path = ?, updated_at = ? WHERE id = ?")
+            .bind(input.path.trim())
+            .bind(&now)
+            .bind(&input.project_id)
+            .execute(&pool)
+            .await
+            .map_err(mcp_error)?;
+
+        if res.rows_affected() == 0 {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params("找不到项目", None));
+        }
+
+        let projects = load_projects(&pool).await.map_err(mcp_error)?;
+        let updated_project = projects.into_iter().find(|p| p.get("id").and_then(Value::as_str) == Some(&input.project_id));
+        pool.close().await;
+
+        self.emit_task_updated();
+        structured(json!({ "project": updated_project }))
     }
 }
 
@@ -652,7 +1007,7 @@ async fn load_columns(pool: &SqlitePool) -> Result<Vec<ColumnData>, sqlx::Error>
 
 async fn load_projects(pool: &SqlitePool) -> Result<Vec<Value>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT p.id, p.name, p.color, p.description, p.target_date, p.status, p.created_at, p.updated_at, t.column_id, COUNT(t.id) AS task_count FROM projects p LEFT JOIN tasks t ON t.project_id = p.id AND t.deleted_at IS NULL GROUP BY p.id, p.name, p.color, p.description, p.target_date, p.status, p.created_at, p.updated_at, t.column_id ORDER BY p.status, p.name COLLATE NOCASE",
+        "SELECT p.id, p.name, p.color, p.description, p.path, p.target_date, p.status, p.created_at, p.updated_at, t.column_id, COUNT(t.id) AS task_count FROM projects p LEFT JOIN tasks t ON t.project_id = p.id AND t.deleted_at IS NULL GROUP BY p.id, p.name, p.color, p.description, p.path, p.target_date, p.status, p.created_at, p.updated_at, t.column_id ORDER BY p.status, p.name COLLATE NOCASE",
     )
     .fetch_all(pool)
     .await?;
@@ -665,6 +1020,7 @@ async fn load_projects(pool: &SqlitePool) -> Result<Vec<Value>, sqlx::Error> {
                 "name": row.get::<String, _>("name"),
                 "color": row.get::<String, _>("color"),
                 "description": row.get::<String, _>("description"),
+                "path": row.get::<String, _>("path"),
                 "targetDate": row.get::<Option<String>, _>("target_date"),
                 "status": row.get::<String, _>("status"),
                 "createdAt": row.get::<String, _>("created_at"),
@@ -685,9 +1041,14 @@ async fn load_tasks(pool: &SqlitePool, deleted: bool) -> Result<Vec<TaskData>, s
     Ok(tasks)
 }
 
+async fn load_task_by_id(pool: &SqlitePool, task_id: &str) -> Result<Option<TaskData>, sqlx::Error> {
+    let tasks = load_all_tasks(pool).await?;
+    Ok(tasks.into_iter().find(|t| t.id == task_id))
+}
+
 async fn load_all_tasks(pool: &SqlitePool) -> Result<Vec<TaskData>, sqlx::Error> {
     let task_rows = sqlx::query(
-        "SELECT t.id, t.column_id, t.project_id, p.name AS project_name, p.color AS project_color, t.title, t.description, t.due_date, t.priority, t.position, t.completed_at, t.started_at, t.blocked_reason, t.blocked_since, t.recurrence_rule, t.created_at, t.updated_at, t.deleted_at FROM tasks t LEFT JOIN projects p ON p.id = t.project_id ORDER BY t.position",
+        "SELECT t.id, t.column_id, t.project_id, p.name AS project_name, p.color AS project_color, p.path AS project_path, t.title, t.description, t.due_date, t.priority, t.position, t.completed_at, t.started_at, t.blocked_reason, t.blocked_since, t.recurrence_rule, t.created_at, t.updated_at, t.deleted_at FROM tasks t LEFT JOIN projects p ON p.id = t.project_id ORDER BY t.position",
     )
     .fetch_all(pool)
     .await?;
@@ -735,6 +1096,7 @@ async fn load_all_tasks(pool: &SqlitePool) -> Result<Vec<TaskData>, sqlx::Error>
                         id: project_id.clone(),
                         name: project_name.clone()?,
                         color: project_color.clone()?,
+                        path: row.get::<Option<String>, _>("project_path").unwrap_or_default(),
                     })
                 }),
                 project_id,
@@ -926,7 +1288,7 @@ mod tests {
         let service = StreamableHttpService::new(
             {
                 let database = Arc::new(Mutex::new(database.clone()));
-                move || Ok(KanboardMcp::new(database.clone()))
+                move || Ok(KanboardMcp::new(database.clone(), None))
             },
             LocalSessionManager::default().into(),
             StreamableHttpServerConfig::default()
@@ -957,6 +1319,11 @@ mod tests {
         assert!(names.contains("list_tags"));
         assert!(names.contains("list_task_events"));
         assert!(names.contains("get_flow_metrics"));
+        assert!(names.contains("update_task_status"));
+        assert!(names.contains("set_task_blocked"));
+        assert!(names.contains("update_checklist_item"));
+        assert!(names.contains("append_task_notes"));
+        assert!(names.contains("set_project_path"));
 
         let result = client
             .call_tool(CallToolRequestParams::new("get_dashboard_summary"))

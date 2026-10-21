@@ -82,6 +82,7 @@ describe("task project and tag persistence", () => {
           projectId: "project-1",
           projectName: "看板桌面版",
           projectColor: "#285a78",
+          projectPath: null,
           title: "补充标签",
           description: "",
           dueDate: null,
@@ -105,6 +106,7 @@ describe("task project and tag persistence", () => {
       id: "project-1",
       name: "看板桌面版",
       color: "#285a78",
+      path: "",
     });
     expect(columns[0]?.tasks[0]?.tags).toEqual([{ id: "tag-1", name: "开发" }]);
   });

@@ -21,11 +21,36 @@ describe("ProjectEditor", () => {
   it("saves a custom identification color", async () => {
     const wrapper = mount(ProjectEditor, { props: { open: true, project: null, saving: false } });
 
-    await wrapper.get("input[autocomplete='off']").setValue("新项目");
+    await wrapper.findAll("input[autocomplete='off']")[0].setValue("新项目");
     await wrapper.get("input[type='color']").setValue("#12abcf");
     expect(wrapper.get(".project-color-field__custom").classes()).toContain("project-color-field__custom--active");
     await wrapper.get("form").trigger("submit");
 
     expect(wrapper.emitted("save")?.[0]?.[0]).toMatchObject({ name: "新项目", color: "#12abcf" });
+  });
+
+  it("edits and saves project local path", async () => {
+    const project = {
+      id: "project-1",
+      name: "现有项目",
+      color: "#285a78",
+      description: "现有说明",
+      path: "D:/MyWorkspace/old-path",
+      targetDate: null,
+      status: "active" as const,
+      createdAt: "2026-09-01T00:00:00Z",
+      updatedAt: "2026-09-01T00:00:00Z",
+    };
+    const wrapper = mount(ProjectEditor, { props: { open: true, project, saving: false } });
+    const inputs = wrapper.findAll("input[autocomplete='off']");
+    expect((inputs[1].element as HTMLInputElement).value).toBe("D:/MyWorkspace/old-path");
+
+    await inputs[1].setValue("D:/MyWorkspace/new-path");
+    await wrapper.get("form").trigger("submit");
+
+    expect(wrapper.emitted("save")?.[0]?.[0]).toMatchObject({
+      name: "现有项目",
+      path: "D:/MyWorkspace/new-path",
+    });
   });
 });

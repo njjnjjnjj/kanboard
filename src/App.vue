@@ -60,6 +60,8 @@ const editingProject = ref<Project | null>(null);
 let orderQueue: Promise<boolean> = Promise.resolve(true);
 let statusTimer: number | undefined;
 let unlistenTaskCreated: UnlistenFn | undefined;
+let unlistenMcpTaskUpdated: UnlistenFn | undefined;
+let unlistenMcpTaskBlocked: UnlistenFn | undefined;
 let undoTimer: number | undefined;
 
 const selectedTask = computed(() => {
@@ -354,7 +356,7 @@ async function persistProject(changes: ProjectChanges) {
     projects.value.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
     for (const task of allTasks.value) {
       if (task.projectId === project.id) {
-        task.project = { id: project.id, name: project.name, color: project.color };
+        task.project = { id: project.id, name: project.name, color: project.color, path: project.path };
       }
     }
     if (project.status === "archived" && scope.value.kind === "project" && scope.value.id === project.id) {
@@ -607,6 +609,16 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 onMounted(async () => {
   window.addEventListener("keydown", handleGlobalKeydown);
   unlistenTaskCreated = await listen<string | null>("task-created", handleTaskCreated);
+  unlistenMcpTaskUpdated = await listen("mcp:task-updated", async () => {
+    await load();
+  });
+  unlistenMcpTaskBlocked = await listen<{ taskId: string; title: string; reason: string; detail: string }>(
+    "mcp:task-blocked",
+    async (event) => {
+      announce(`任务【${event.payload.title}】出现阻塞：${event.payload.detail}`);
+      await load();
+    },
+  );
   await load();
   await nextTick();
   const splash = document.querySelector<HTMLElement>("#startup-splash");
@@ -622,6 +634,8 @@ onBeforeUnmount(() => {
   stopTrashTracking();
   window.removeEventListener("keydown", handleGlobalKeydown);
   unlistenTaskCreated?.();
+  unlistenMcpTaskUpdated?.();
+  unlistenMcpTaskBlocked?.();
   window.clearTimeout(statusTimer);
   window.clearInterval(undoTimer);
 });

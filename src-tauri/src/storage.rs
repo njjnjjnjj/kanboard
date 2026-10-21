@@ -82,6 +82,11 @@ pub(crate) fn migrations() -> Migrator {
             "add_task_trash",
             include_str!("../migrations/0005_task_trash.sql"),
         ),
+        (
+            6,
+            "add_project_path",
+            include_str!("../migrations/0006_project_path.sql"),
+        ),
     ];
     Migrator {
         migrations: Cow::Owned(

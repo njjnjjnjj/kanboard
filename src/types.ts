@@ -15,6 +15,7 @@ export interface Project {
   name: string;
   color: string;
   description: string;
+  path: string;
   targetDate: string | null;
   status: ProjectStatus;
   createdAt: string;
@@ -30,7 +31,7 @@ export interface Task {
   id: string;
   columnId: string;
   projectId: string | null;
-  project: Pick<Project, "id" | "name" | "color"> | null;
+  project: Pick<Project, "id" | "name" | "color" | "path"> | null;
   tags: Tag[];
   title: string;
   description: string;
@@ -77,6 +78,7 @@ export interface ProjectChanges {
   name: string;
   color: string;
   description: string;
+  path: string;
   targetDate: string | null;
   status: ProjectStatus;
 }

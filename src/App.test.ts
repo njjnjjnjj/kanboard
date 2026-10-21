@@ -9,8 +9,8 @@ const taskCreatedListener = vi.hoisted(() => ({
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async (_event: string, listener: typeof taskCreatedListener.value) => {
-    taskCreatedListener.value = listener;
+  listen: vi.fn(async (event: string, listener: typeof taskCreatedListener.value) => {
+    if (event === "task-created") taskCreatedListener.value = listener;
     return vi.fn();
   }),
 }));
