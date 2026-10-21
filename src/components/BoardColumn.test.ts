@@ -61,7 +61,7 @@ describe("BoardColumn drag contract", () => {
 
     expect(draggable.props("handle")).toBeUndefined();
     expect(draggable.props("draggable")).toBe(".task-card");
-    expect(draggable.props("filter")).toBe(".task-card__check");
+    expect(draggable.props("filter")).toBe(".task-card__check, .task-card__agent-drag");
     expect(draggable.props("preventOnFilter")).toBe(false);
     expect(draggable.props("forceFallback")).toBe(true);
 

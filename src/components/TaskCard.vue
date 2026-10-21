@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { elapsedLabel, isAgingWarning } from "../flowTime";
+import { buildAgentTaskPrompt } from "../drag/agentPrompt";
 import type { Task } from "../types";
 
 const props = defineProps<{
@@ -60,6 +61,14 @@ const checklistProgress = computed(() => {
   return `${props.task.checklist.filter((item) => item.completed).length}/${props.task.checklist.length}`;
 });
 
+function onAgentDragStart(event: DragEvent) {
+  if (!event.dataTransfer) return;
+  event.stopPropagation();
+  const prompt = buildAgentTaskPrompt(props.task);
+  event.dataTransfer.setData("text/plain", prompt);
+  event.dataTransfer.effectAllowed = "copy";
+}
+
 function selectFromKeyboard(event: KeyboardEvent) {
   if (event.key === "Enter" || event.key === " ") {
     event.preventDefault();
@@ -90,6 +99,25 @@ function selectFromKeyboard(event: KeyboardEvent) {
         </svg>
       </button>
       <h3>{{ task.title }}</h3>
+      <div
+        class="task-card__agent-drag"
+        draggable="true"
+        role="button"
+        tabindex="-1"
+        title="按住拖拽至 Codex / AI 助手"
+        aria-label="按住拖动任务至 AI 助手"
+        @dragstart="onAgentDragStart"
+        @click.stop
+      >
+        <svg viewBox="0 0 16 16" aria-hidden="true" class="task-card__agent-drag-icon">
+          <path d="M8 1.5v2" />
+          <rect x="2.5" y="3.5" width="11" height="9" rx="2" />
+          <circle cx="5.5" cy="7.5" r="1" fill="currentColor" />
+          <circle cx="10.5" cy="7.5" r="1" fill="currentColor" />
+          <path d="M6 10h4" />
+        </svg>
+        <span>Agent</span>
+      </div>
     </div>
     <div v-if="task.project || task.tags.length" class="task-card__identity">
       <span v-if="task.project" class="task-card__project">

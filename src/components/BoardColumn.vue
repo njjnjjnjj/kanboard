@@ -83,7 +83,7 @@ function endDrag(event: SortableDragEvent) {
       :group="{ name: dragGroup ?? 'personal-tasks' }"
       :on-move="allowInsert"
       draggable=".task-card"
-      filter=".task-card__check"
+      filter=".task-card__check, .task-card__agent-drag"
       :prevent-on-filter="false"
       :force-fallback="true"
       :fallback-on-body="true"
