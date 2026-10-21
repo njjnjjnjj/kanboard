@@ -60,11 +60,11 @@ describe("TaskCard Agent drag", () => {
 
     expect(setData).toHaveBeenCalledWith(
       "text/plain",
-      expect.stringContaining("【Kanboard 任务派发】优化APP启动速度"),
+      expect.stringContaining("【看板任务】优化APP启动速度"),
     );
     expect(setData).toHaveBeenCalledWith(
       "text/plain",
-      expect.stringContaining('get_task(task_id="task-001")'),
+      expect.stringContaining("task-001"),
     );
     expect(setData).toHaveBeenCalledWith(
       "text/plain",

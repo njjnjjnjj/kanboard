@@ -3,7 +3,7 @@ import type { Task } from "../types";
 import { buildAgentTaskPrompt } from "./agentPrompt";
 
 describe("agentPrompt", () => {
-  it("formats task prompt with project and path", () => {
+  it("formats concise task prompt with project and path", () => {
     const task: Task = {
       id: "task-123",
       columnId: "todo",
@@ -26,15 +26,12 @@ describe("agentPrompt", () => {
     };
 
     const prompt = buildAgentTaskPrompt(task);
-    expect(prompt).toContain("【Kanboard 任务派发】优化APP启动");
+    expect(prompt).toContain("【看板任务】优化APP启动");
     expect(prompt).toContain("task-123");
-    expect(prompt).toContain("项目本地路径: D:/workspace/medchat-edge");
+    expect(prompt).toContain("所属项目: medchat-edge (D:/workspace/medchat-edge)");
     expect(prompt).toContain("优先级: 高");
     expect(prompt).toContain("检查清单进度: 1/1");
-    expect(prompt).toContain('get_task(task_id="task-123")');
-    expect(prompt).toContain('update_task_status(task_id="task-123", status="doing")');
-    expect(prompt).toContain("前往项目本地路径 `D:/workspace/medchat-edge`");
-    expect(prompt).toContain("set_task_blocked");
+    expect(prompt).toContain("请按 Kanboard SOP 执行该任务：前往本地项目路径开发，完成后流转至「待验证」并附上验证指南。");
   });
 
   it("formats task prompt without project or path gracefully", () => {
@@ -60,9 +57,9 @@ describe("agentPrompt", () => {
     };
 
     const prompt = buildAgentTaskPrompt(task);
-    expect(prompt).toContain("【Kanboard 任务派发】独立小任务");
+    expect(prompt).toContain("【看板任务】独立小任务");
     expect(prompt).toContain("task-456");
     expect(prompt).not.toContain("所属项目");
-    expect(prompt).toContain("根据任务要求进行代码修改与测试。");
+    expect(prompt).toContain("请按 Kanboard SOP 执行该任务：前往本地项目路径开发，完成后流转至「待验证」并附上验证指南。");
   });
 });

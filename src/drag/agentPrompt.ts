@@ -2,15 +2,14 @@ import type { Task } from "../types";
 
 export function buildAgentTaskPrompt(task: Task): string {
   const lines: string[] = [];
-  lines.push(`【Kanboard 任务派发】${task.title}`);
+  lines.push(`【看板任务】${task.title}`);
   lines.push(`- 任务 ID: ${task.id}`);
-  lines.push(`- 当前状态: ${task.columnId}`);
-  lines.push(`- 优先级: ${task.priority === "high" ? "高" : "普通"}`);
   if (task.project) {
-    lines.push(`- 所属项目: ${task.project.name}`);
-    if (task.project.path) {
-      lines.push(`- 项目本地路径: ${task.project.path}`);
-    }
+    const projectPathInfo = task.project.path ? ` (${task.project.path})` : "";
+    lines.push(`- 所属项目: ${task.project.name}${projectPathInfo}`);
+  }
+  if (task.priority === "high") {
+    lines.push("- 优先级: 高");
   }
   if (task.dueDate) {
     lines.push(`- 截止日期: ${task.dueDate}`);
@@ -23,17 +22,7 @@ export function buildAgentTaskPrompt(task: Task): string {
     lines.push(`- 任务说明: ${task.description.trim()}`);
   }
   lines.push("");
-  lines.push("请使用本地 `kanboard` MCP 服务自主推进并完成该任务：");
-  lines.push(`1. 调用 \`get_task(task_id="${task.id}")\` 获取任务详情、完整检查清单及历史流转。`);
-  lines.push(`2. 调用 \`update_task_status(task_id="${task.id}", status="doing")\` 将任务移至进行中。`);
-  if (task.project?.path) {
-    lines.push(`3. 前往项目本地路径 \`${task.project.path}\` 进行代码修改与测试。`);
-  } else {
-    lines.push("3. 根据任务要求进行代码修改与测试。");
-  }
-  lines.push("4. 在完成子项时，调用 `update_checklist_item` 实时打钩标记进度。");
-  lines.push("5. 若遇到阻塞或无法自动解决的异常，调用 `set_task_blocked` 记录详细原因与阻塞上下文并向我汇报。");
-  lines.push(`6. 任务全部完成后，调用 \`update_task_status(task_id="${task.id}", status="done")\`。`);
+  lines.push("请按 Kanboard SOP 执行该任务：前往本地项目路径开发，完成后流转至「待验证」并附上验证指南。");
 
   return lines.join("\n");
 }
