@@ -395,6 +395,20 @@ struct UpdateTaskStatusInput {
     reason: Option<String>,
     /// Optional comment explaining the transition.
     comment: Option<String>,
+    /// Optional structured review/verification notes (typically when moving to verify).
+    review_notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SubmitTaskVerificationInput {
+    /// Stable task id.
+    task_id: String,
+    /// Brief implementation details (core changed modules, architecture, solution details).
+    implementation: String,
+    /// Completion summary (key deliverables, achieved checklist items).
+    summary: String,
+    /// Testing & verification instructions (commands, test cases, UI steps for human review).
+    test_guide: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -477,6 +491,7 @@ struct TaskData {
     blocked_since: Option<String>,
     checklist: Vec<ChecklistData>,
     recurrence_rule: String,
+    review_notes: String,
     created_at: String,
     updated_at: String,
     deleted_at: Option<String>,
@@ -768,8 +783,14 @@ impl KanboardMcp {
             task.description.clone()
         };
 
+        let updated_review_notes = if let Some(notes) = &input.review_notes {
+            notes.clone()
+        } else {
+            task.review_notes.clone()
+        };
+
         sqlx::query(
-            "UPDATE tasks SET column_id = ?, completed_at = ?, started_at = ?, blocked_reason = ?, blocked_since = ?, description = ?, updated_at = ? WHERE id = ?"
+            "UPDATE tasks SET column_id = ?, completed_at = ?, started_at = ?, blocked_reason = ?, blocked_since = ?, description = ?, review_notes = ?, updated_at = ? WHERE id = ?"
         )
         .bind(&input.status)
         .bind(&completed_at)
@@ -777,6 +798,7 @@ impl KanboardMcp {
         .bind(&blocked_reason)
         .bind(&blocked_since)
         .bind(&updated_desc)
+        .bind(&updated_review_notes)
         .bind(&now)
         .bind(&input.task_id)
         .execute(&pool)
@@ -807,6 +829,55 @@ impl KanboardMcp {
         }
 
         structured(json!({ "task": updated_task }))
+    }
+
+    #[tool(description = "Submit a task for human verification and move it to the 'verify' column. The agent must provide implementation details, completion summary, and testing instructions to assist user review. Agents must NOT directly mark tasks as 'done'.")]
+    async fn submit_task_verification(
+        &self,
+        Parameters(input): Parameters<SubmitTaskVerificationInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let now = Utc::now().to_rfc3339();
+
+        let Some(task) = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)? else {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params("找不到任务", None));
+        };
+
+        let formatted_notes = format!(
+            "### 🛠️ 实现方式\n{}\n\n### ✅ 完成情况\n{}\n\n### 🧪 验证与测试方式\n{}",
+            input.implementation.trim(),
+            input.summary.trim(),
+            input.test_guide.trim(),
+        );
+
+        sqlx::query(
+            "UPDATE tasks SET column_id = 'verify', review_notes = ?, updated_at = ? WHERE id = ?"
+        )
+        .bind(&formatted_notes)
+        .bind(&now)
+        .bind(&input.task_id)
+        .execute(&pool)
+        .await
+        .map_err(mcp_error)?;
+
+        if task.column_id != "verify" {
+            sqlx::query(
+                "INSERT INTO task_events (task_id, from_status, to_status, created_at) VALUES (?, ?, 'verify', ?)"
+            )
+            .bind(&input.task_id)
+            .bind(&task.column_id)
+            .bind(&now)
+            .execute(&pool)
+            .await
+            .map_err(mcp_error)?;
+        }
+
+        let updated_task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
+        pool.close().await;
+
+        self.emit_task_updated();
+        structured(json!({ "task": updated_task, "verifiedPending": true }))
     }
 
     #[tool(description = "Move a task to the blocked column due to an exception, failure, missing dependency, or need for human assistance. Records structured error context and notifies the user.")]
@@ -1048,7 +1119,7 @@ async fn load_task_by_id(pool: &SqlitePool, task_id: &str) -> Result<Option<Task
 
 async fn load_all_tasks(pool: &SqlitePool) -> Result<Vec<TaskData>, sqlx::Error> {
     let task_rows = sqlx::query(
-        "SELECT t.id, t.column_id, t.project_id, p.name AS project_name, p.color AS project_color, p.path AS project_path, t.title, t.description, t.due_date, t.priority, t.position, t.completed_at, t.started_at, t.blocked_reason, t.blocked_since, t.recurrence_rule, t.created_at, t.updated_at, t.deleted_at FROM tasks t LEFT JOIN projects p ON p.id = t.project_id ORDER BY t.position",
+        "SELECT t.id, t.column_id, t.project_id, p.name AS project_name, p.color AS project_color, p.path AS project_path, t.title, t.description, t.due_date, t.priority, t.position, t.completed_at, t.started_at, t.blocked_reason, t.blocked_since, t.recurrence_rule, t.review_notes, t.created_at, t.updated_at, t.deleted_at FROM tasks t LEFT JOIN projects p ON p.id = t.project_id ORDER BY t.position",
     )
     .fetch_all(pool)
     .await?;
@@ -1112,6 +1183,7 @@ async fn load_all_tasks(pool: &SqlitePool) -> Result<Vec<TaskData>, sqlx::Error>
                 blocked_since: row.get("blocked_since"),
                 checklist: checklist.remove(&id).unwrap_or_default(),
                 recurrence_rule: row.get("recurrence_rule"),
+                review_notes: row.get::<Option<String>, _>("review_notes").unwrap_or_default(),
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 deleted_at: row.get("deleted_at"),
@@ -1324,12 +1396,43 @@ mod tests {
         assert!(names.contains("update_checklist_item"));
         assert!(names.contains("append_task_notes"));
         assert!(names.contains("set_project_path"));
+        assert!(names.contains("submit_task_verification"));
 
         let result = client
             .call_tool(CallToolRequestParams::new("get_dashboard_summary"))
             .await
             .unwrap();
         assert_eq!(result.structured_content.unwrap()["totalActive"], 0);
+
+        let test_pool = SqlitePool::connect_with(
+            SqliteConnectOptions::new().filename(&database),
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO tasks (id, column_id, title, description, recurrence_rule, position, created_at, updated_at) VALUES ('task-test-1', 'doing', '测试任务', '', 'none', 1000, '2026-10-21T00:00:00Z', '2026-10-21T00:00:00Z')"
+        )
+        .execute(&test_pool)
+        .await
+        .unwrap();
+        test_pool.close().await;
+
+        let verify_res = client
+            .call_tool(
+                CallToolRequestParams::new("submit_task_verification")
+                    .with_arguments(serde_json::from_value(json!({
+                        "task_id": "task-test-1",
+                        "implementation": "修改了 mcp.rs 后端工具与 TaskInspector.vue 前端",
+                        "summary": "全部单元测试通过，支持结构化存储交付与验证方案",
+                        "test_guide": "运行 cargo test 与 npm test，并在看板待验证列检查"
+                    })).unwrap())
+            )
+            .await
+            .unwrap();
+        let verify_content = verify_res.structured_content.unwrap();
+        assert_eq!(verify_content["task"]["columnId"], "verify");
+        assert!(verify_content["task"]["reviewNotes"].as_str().unwrap().contains("### 🛠️ 实现方式"));
+        assert_eq!(verify_content["verifiedPending"], true);
 
         client.cancel().await.unwrap();
         cancellation.cancel();

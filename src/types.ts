@@ -44,6 +44,7 @@ export interface Task {
   blockedSince: string | null;
   checklist: ChecklistItem[];
   recurrenceRule: RecurrenceRule;
+  reviewNotes: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -72,6 +73,7 @@ export interface TaskChanges {
   blockedReason: BlockedReason | null;
   checklist: ChecklistItem[];
   recurrenceRule: RecurrenceRule;
+  reviewNotes: string;
 }
 
 export interface ProjectChanges {

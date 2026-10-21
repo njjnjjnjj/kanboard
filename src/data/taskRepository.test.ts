@@ -48,6 +48,7 @@ describe("task repository ordering", () => {
             blockedSince: null,
             checklist: [],
             recurrenceRule: "none",
+            reviewNotes: "",
             createdAt: "2026-09-15T00:00:00.000Z",
             updatedAt: "2026-09-15T00:00:00.000Z",
           },
@@ -93,6 +94,7 @@ describe("task project and tag persistence", () => {
           blockedReason: null,
           blockedSince: null,
           recurrenceRule: "none",
+          reviewNotes: "",
           createdAt: "2026-09-16T00:00:00.000Z",
           updatedAt: "2026-09-16T00:00:00.000Z",
         },
@@ -125,6 +127,7 @@ describe("task project and tag persistence", () => {
       blockedReason: null,
       checklist: [],
       recurrenceRule: "none",
+      reviewNotes: "",
     });
 
     expect(tags).toEqual([{ id: "tag-1", name: "开发" }]);

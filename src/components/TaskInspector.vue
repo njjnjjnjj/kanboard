@@ -61,6 +61,7 @@ const draft = reactive<TaskChanges>({
   blockedReason: null,
   checklist: [],
   recurrenceRule: "none",
+  reviewNotes: "",
 });
 
 watch(
@@ -78,6 +79,7 @@ watch(
     draft.blockedReason = task.blockedReason;
     draft.checklist = task.checklist.map((item) => ({ ...item }));
     draft.recurrenceRule = task.recurrenceRule;
+    draft.reviewNotes = task.reviewNotes || "";
   },
   { immediate: true, deep: true },
 );
@@ -107,6 +109,11 @@ function setRecurrence(value: string) {
   if (value === "none" || value === "daily" || value === "weekly" || value === "monthly") {
     draft.recurrenceRule = value;
   }
+}
+
+function passVerification() {
+  draft.columnId = "done";
+  submit();
 }
 
 function submitWithShortcut(event: KeyboardEvent) {
@@ -199,6 +206,33 @@ async function handleTabKeydown(event: KeyboardEvent) {
           <span>标签</span>
           <TagInput v-model="draft.tagNames" :suggestions="tags" />
         </div>
+
+        <section
+          v-if="draft.columnId === 'verify' || draft.reviewNotes"
+          class="task-inspector__verification-box"
+        >
+          <div class="task-inspector__verification-header">
+            <div class="task-inspector__verification-title">
+              <span class="verification-badge">🤖 交付与验证指南</span>
+              <span v-if="draft.columnId === 'verify'" class="verification-status-pill">待人工验证</span>
+            </div>
+            <button
+              v-if="draft.columnId === 'verify'"
+              type="button"
+              class="pass-verification-button"
+              title="确认代码及测试通过，完成该任务"
+              @click="passVerification"
+            >
+              ✓ 通过验证并完成
+            </button>
+          </div>
+          <textarea
+            v-model="draft.reviewNotes"
+            class="task-inspector__verification-textarea"
+            rows="6"
+            placeholder="包含实现方式、完成情况及测试用例/操作路径等验证指南"
+          />
+        </section>
 
         <label class="field field--description">
           <span>任务说明</span>

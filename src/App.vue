@@ -327,6 +327,7 @@ async function toggleTask(task: Task) {
     blockedReason: task.blockedReason,
     checklist: task.checklist,
     recurrenceRule: task.recurrenceRule,
+    reviewNotes: task.reviewNotes,
   });
 }
 

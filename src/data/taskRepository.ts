@@ -42,6 +42,7 @@ interface TaskRow {
   blockedReason: Task["blockedReason"];
   blockedSince: string | null;
   recurrenceRule: Task["recurrenceRule"];
+  reviewNotes: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -85,6 +86,7 @@ export async function loadTaskWall(): Promise<TaskColumn[]> {
               t.blocked_reason AS blockedReason,
               t.blocked_since AS blockedSince,
               t.recurrence_rule AS recurrenceRule,
+              t.review_notes AS reviewNotes,
               t.created_at AS createdAt,
               t.updated_at AS updatedAt
          FROM tasks t
@@ -144,6 +146,7 @@ export async function loadDeletedTasks(): Promise<DeletedTask[]> {
               t.blocked_reason AS blockedReason,
               t.blocked_since AS blockedSince,
               t.recurrence_rule AS recurrenceRule,
+              t.review_notes AS reviewNotes,
               t.created_at AS createdAt,
               t.updated_at AS updatedAt,
               t.deleted_at AS deletedAt
@@ -226,6 +229,7 @@ export async function createTask(
     blockedSince: null,
     checklist: [],
     recurrenceRule: "none",
+    reviewNotes: "",
     createdAt: now,
     updatedAt: now,
   };
@@ -262,8 +266,9 @@ export async function updateTask(id: string, changes: TaskChanges): Promise<Tag[
               ELSE blocked_since
             END,
             recurrence_rule = $10,
+            review_notes = $11,
             updated_at = $8
-      WHERE id = $11`,
+      WHERE id = $12`,
     [
       changes.columnId,
       changes.projectId,
@@ -275,6 +280,7 @@ export async function updateTask(id: string, changes: TaskChanges): Promise<Tag[
       now,
       changes.blockedReason,
       changes.recurrenceRule,
+      changes.reviewNotes,
       id,
     ],
   );

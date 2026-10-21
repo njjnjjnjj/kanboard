@@ -87,6 +87,11 @@ pub(crate) fn migrations() -> Migrator {
             "add_project_path",
             include_str!("../migrations/0006_project_path.sql"),
         ),
+        (
+            7,
+            "add_task_review_notes",
+            include_str!("../migrations/0007_task_review.sql"),
+        ),
     ];
     Migrator {
         migrations: Cow::Owned(

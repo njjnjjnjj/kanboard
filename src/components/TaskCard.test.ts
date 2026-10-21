@@ -25,6 +25,7 @@ const mockTask: Task = {
   blockedSince: null,
   checklist: [{ id: "c-1", text: "测试子任务", completed: false, position: 1000 }],
   recurrenceRule: "none",
+  reviewNotes: "",
   createdAt: "2026-10-21T00:00:00Z",
   updatedAt: "2026-10-21T00:00:00Z",
 };

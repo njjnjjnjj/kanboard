@@ -764,13 +764,23 @@ kbd {
 .task-inspector__tabs button[aria-selected="true"] { border-bottom-color: var(--accent); color: var(--ink-strong); font-weight: 700; }
 .task-inspector__tabs button span { margin-left: 4px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .task-inspector__panel { min-height: 0; }
-.task-inspector__panel--details { display: grid; grid-template-rows: auto auto minmax(180px, 1fr); padding: 2px 2px 16px; overflow-y: auto; }
+.task-inspector__panel--details { display: flex; flex-direction: column; padding: 2px 2px 16px; overflow-y: auto; }
 .task-inspector__panel--checklist { display: grid; grid-template-rows: minmax(0, 1fr); padding: 2px 2px 16px; }
 .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
 .field--project,
 .field--blocked-reason { grid-column: 1 / -1; }
 .field--description { min-height: 0; grid-template-rows: auto minmax(0, 1fr); }
 .field--description textarea { height: 100%; min-height: 164px; }
+
+.task-inspector__verification-box { margin: 0 0 16px; padding: 12px; border: 1px solid #c2dbd0; border-radius: 6px; background: #f3f8f5; }
+.task-inspector__verification-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.task-inspector__verification-title { display: flex; align-items: center; gap: 8px; }
+.verification-badge { color: #1e6347; font-size: 13px; font-weight: 700; }
+.verification-status-pill { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 999px; background: #def0e6; color: #185a3f; font-size: 11px; font-weight: 600; }
+.pass-verification-button { padding: 4px 10px; border: 0; border-radius: 4px; background: #257953; color: #fff; font-size: 12px; font-weight: 600; cursor: pointer; transition: background 120ms ease; }
+.pass-verification-button:hover { background: #1c6141; }
+.task-inspector__verification-textarea { width: 100%; min-height: 140px; padding: 8px 10px; border: 1px solid #b7d6c6; border-radius: 5px; background: #fffefa; color: var(--ink); font-family: inherit; font-size: 13px; line-height: 1.55; resize: vertical; box-sizing: border-box; }
+.task-inspector__verification-textarea:focus { outline: 2px solid #257953; outline-offset: -1px; }
 
 .field--checklist { min-height: 0; grid-template-rows: auto minmax(0, 1fr); }
 .task-checklist { display: grid; height: 100%; min-height: 0; grid-template-rows: minmax(0, 1fr) auto; border: 1px solid #c6cac5; border-radius: 5px; background: #fffefa; }
