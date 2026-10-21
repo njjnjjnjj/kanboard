@@ -20,7 +20,7 @@ const mockTask: Task = {
   blockedSince: null,
   checklist: [],
   recurrenceRule: "none",
-  reviewNotes: "### 🛠️ 实现方式\n已完成相关逻辑改造\n\n### 🧪 验证与测试方式\n请执行测试",
+  reviewNotes: "### 实现方案\n已完成相关逻辑改造\n\n### 交付情况\n全部功能点已实现\n\n### 验证与测试方式\n请执行测试",
   createdAt: "2026-10-21T00:00:00Z",
   updatedAt: "2026-10-21T00:00:00Z",
 };
@@ -32,8 +32,8 @@ const columns: TaskColumn[] = [
   { id: "done", title: "已完成", position: 4000, wipLimit: null, tasks: [] },
 ];
 
-describe("TaskInspector verification panel", () => {
-  it("renders verification box when task is in verify status", () => {
+describe("TaskInspector verification tab", () => {
+  it("renders 3 peer tabs and auto-selects verification tab when task is in verify status", () => {
     const wrapper = mount(TaskInspector, {
       props: {
         task: mockTask,
@@ -44,13 +44,20 @@ describe("TaskInspector verification panel", () => {
       },
     });
 
-    expect(wrapper.find(".task-inspector__verification-box").exists()).toBe(true);
-    expect(wrapper.find(".verification-badge").text()).toContain("交付与验证指南");
-    expect(wrapper.find(".verification-status-pill").text()).toContain("待人工验证");
-    expect(wrapper.find(".pass-verification-button").exists()).toBe(true);
+    const tabs = wrapper.findAll(".task-inspector__tabs button");
+    expect(tabs).toHaveLength(3);
+    expect(tabs[0].text()).toContain("任务详情");
+    expect(tabs[1].text()).toContain("完成条件");
+    expect(tabs[2].text()).toContain("待验证方案");
+    expect(tabs[2].attributes("aria-selected")).toBe("true");
+
+    const verificationPanel = wrapper.find("#task-verification-panel");
+    expect(verificationPanel.isVisible()).toBe(true);
+    expect(wrapper.find(".task-verification__toolbar").text()).toContain("当前任务等待人工核验");
+    expect(wrapper.find(".secondary-button").text()).toBe("通过验证并完成");
   });
 
-  it("passes verification and marks task as done upon clicking button", async () => {
+  it("passes verification and marks task as done upon clicking the button", async () => {
     const wrapper = mount(TaskInspector, {
       props: {
         task: mockTask,
@@ -61,7 +68,7 @@ describe("TaskInspector verification panel", () => {
       },
     });
 
-    const passBtn = wrapper.find(".pass-verification-button");
+    const passBtn = wrapper.find(".task-verification__toolbar .secondary-button");
     await passBtn.trigger("click");
 
     const saveEvents = wrapper.emitted("save");
@@ -69,11 +76,11 @@ describe("TaskInspector verification panel", () => {
     expect(saveEvents?.[0]?.[0]).toBe("task-001");
     expect(saveEvents?.[0]?.[1]).toMatchObject({
       columnId: "done",
-      reviewNotes: expect.stringContaining("### 🛠️ 实现方式"),
+      reviewNotes: expect.stringContaining("### 实现方案"),
     });
   });
 
-  it("hides verification box when task is in todo and has no review notes", () => {
+  it("defaults to details tab for non-verify tasks and allows switching to verification tab", async () => {
     const wrapper = mount(TaskInspector, {
       props: {
         task: { ...mockTask, columnId: "todo", reviewNotes: "" },
@@ -84,6 +91,15 @@ describe("TaskInspector verification panel", () => {
       },
     });
 
-    expect(wrapper.find(".task-inspector__verification-box").exists()).toBe(false);
+    const tabs = wrapper.findAll(".task-inspector__tabs button");
+    expect(tabs[0].attributes("aria-selected")).toBe("true");
+    expect(tabs[2].attributes("aria-selected")).toBe("false");
+
+    // Click verification tab
+    await tabs[2].trigger("click");
+    expect(tabs[2].attributes("aria-selected")).toBe("true");
+    expect(wrapper.find("#task-verification-panel").isVisible()).toBe(true);
+    // Non-verify task does not show the pass verification toolbar
+    expect(wrapper.find(".task-verification__toolbar").exists()).toBe(false);
   });
 });

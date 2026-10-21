@@ -20,8 +20,11 @@ const emit = defineEmits<{
   close: [];
 }>();
 
+const TABS = ["details", "checklist", "verification"] as const;
+type TabType = typeof TABS[number];
+
 const confirmingDelete = ref(false);
-const activeTab = ref<"details" | "checklist">("details");
+const activeTab = ref<TabType>("details");
 const statusOptions = computed(() =>
   props.columns.map((column) => ({ value: column.id, label: column.title })),
 );
@@ -68,7 +71,9 @@ watch(
   () => props.task,
   (task, previousTask) => {
     confirmingDelete.value = false;
-    if (!previousTask || task.id !== previousTask.id) activeTab.value = "details";
+    if (!previousTask || task.id !== previousTask.id) {
+      activeTab.value = task.columnId === "verify" ? "verification" : "details";
+    }
     draft.title = task.title;
     draft.description = task.description;
     draft.dueDate = task.dueDate;
@@ -127,9 +132,12 @@ async function handleTabKeydown(event: KeyboardEvent) {
   if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
   event.preventDefault();
   const tabList = event.currentTarget as HTMLElement;
-  activeTab.value = event.key === "ArrowRight" ? "checklist" : "details";
+  const currentIndex = TABS.indexOf(activeTab.value);
+  const delta = event.key === "ArrowRight" ? 1 : -1;
+  const nextIndex = (currentIndex + delta + TABS.length) % TABS.length;
+  activeTab.value = TABS[nextIndex];
   await nextTick();
-  tabList.querySelector<HTMLButtonElement>(`[aria-selected="true"]`)?.focus();
+  tabList?.querySelector<HTMLButtonElement>(`[aria-selected="true"]`)?.focus();
 }
 </script>
 
@@ -150,8 +158,39 @@ async function handleTabKeydown(event: KeyboardEvent) {
       </label>
 
       <div class="task-inspector__tabs" role="tablist" aria-label="任务编辑内容" @keydown="handleTabKeydown">
-        <button id="task-details-tab" type="button" role="tab" aria-controls="task-details-panel" :aria-selected="activeTab === 'details'" :tabindex="activeTab === 'details' ? 0 : -1" @click="activeTab = 'details'">任务详情</button>
-        <button id="task-checklist-tab" type="button" role="tab" aria-controls="task-checklist-panel" :aria-selected="activeTab === 'checklist'" :tabindex="activeTab === 'checklist' ? 0 : -1" @click="activeTab = 'checklist'">完成条件 <span>{{ draft.checklist.filter((item) => item.completed).length }}/{{ draft.checklist.length }}</span></button>
+        <button
+          id="task-details-tab"
+          type="button"
+          role="tab"
+          aria-controls="task-details-panel"
+          :aria-selected="activeTab === 'details'"
+          :tabindex="activeTab === 'details' ? 0 : -1"
+          @click="activeTab = 'details'"
+        >
+          任务详情
+        </button>
+        <button
+          id="task-checklist-tab"
+          type="button"
+          role="tab"
+          aria-controls="task-checklist-panel"
+          :aria-selected="activeTab === 'checklist'"
+          :tabindex="activeTab === 'checklist' ? 0 : -1"
+          @click="activeTab = 'checklist'"
+        >
+          完成条件 <span>{{ draft.checklist.filter((item) => item.completed).length }}/{{ draft.checklist.length }}</span>
+        </button>
+        <button
+          id="task-verification-tab"
+          type="button"
+          role="tab"
+          aria-controls="task-verification-panel"
+          :aria-selected="activeTab === 'verification'"
+          :tabindex="activeTab === 'verification' ? 0 : -1"
+          @click="activeTab = 'verification'"
+        >
+          待验证方案 <span v-if="draft.columnId === 'verify'">待验证</span>
+        </button>
       </div>
 
       <section id="task-details-panel" v-show="activeTab === 'details'" class="task-inspector__panel task-inspector__panel--details" role="tabpanel" aria-labelledby="task-details-tab">
@@ -207,33 +246,6 @@ async function handleTabKeydown(event: KeyboardEvent) {
           <TagInput v-model="draft.tagNames" :suggestions="tags" />
         </div>
 
-        <section
-          v-if="draft.columnId === 'verify' || draft.reviewNotes"
-          class="task-inspector__verification-box"
-        >
-          <div class="task-inspector__verification-header">
-            <div class="task-inspector__verification-title">
-              <span class="verification-badge">🤖 交付与验证指南</span>
-              <span v-if="draft.columnId === 'verify'" class="verification-status-pill">待人工验证</span>
-            </div>
-            <button
-              v-if="draft.columnId === 'verify'"
-              type="button"
-              class="pass-verification-button"
-              title="确认代码及测试通过，完成该任务"
-              @click="passVerification"
-            >
-              ✓ 通过验证并完成
-            </button>
-          </div>
-          <textarea
-            v-model="draft.reviewNotes"
-            class="task-inspector__verification-textarea"
-            rows="6"
-            placeholder="包含实现方式、完成情况及测试用例/操作路径等验证指南"
-          />
-        </section>
-
         <label class="field field--description">
           <span>任务说明</span>
           <textarea
@@ -247,6 +259,35 @@ async function handleTabKeydown(event: KeyboardEvent) {
 
       <section id="task-checklist-panel" v-show="activeTab === 'checklist'" class="task-inspector__panel task-inspector__panel--checklist" role="tabpanel" aria-labelledby="task-checklist-tab" data-tour="checklist">
         <TaskChecklist v-model="draft.checklist" />
+      </section>
+
+      <section
+        id="task-verification-panel"
+        v-show="activeTab === 'verification'"
+        class="task-inspector__panel task-inspector__panel--verification"
+        role="tabpanel"
+        aria-labelledby="task-verification-tab"
+      >
+        <div v-if="draft.columnId === 'verify'" class="task-verification__toolbar">
+          <span>当前任务等待人工核验</span>
+          <button
+            type="button"
+            class="secondary-button"
+            @click="passVerification"
+          >
+            通过验证并完成
+          </button>
+        </div>
+
+        <label class="field field--verification-notes">
+          <span>验证与交付说明</span>
+          <textarea
+            data-inspector-review-notes
+            v-model="draft.reviewNotes"
+            rows="12"
+            placeholder="记录实现方案、完成情况及测试用例或复核步骤"
+          />
+        </label>
       </section>
 
       <footer class="task-inspector__actions">

@@ -401,13 +401,13 @@ struct UpdateTaskStatusInput {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct SubmitTaskVerificationInput {
-    /// Stable task id.
+    /// 任务唯一 ID。
     task_id: String,
-    /// Brief implementation details (core changed modules, architecture, solution details).
+    /// 简要实现方案（涉及改动的模块、逻辑与实现方案，使用纯中文撰写，禁止包含 emoji）。
     implementation: String,
-    /// Completion summary (key deliverables, achieved checklist items).
+    /// 交付情况与达成成果（功能点、关键产物及清单达成情况，使用纯中文撰写，禁止包含 emoji）。
     summary: String,
-    /// Testing & verification instructions (commands, test cases, UI steps for human review).
+    /// 验证与测试方式（测试命令、测试用例、界面操作路径或验收标准，使用纯中文撰写，禁止包含 emoji）。
     test_guide: String,
 }
 
@@ -831,7 +831,7 @@ impl KanboardMcp {
         structured(json!({ "task": updated_task }))
     }
 
-    #[tool(description = "Submit a task for human verification and move it to the 'verify' column. The agent must provide implementation details, completion summary, and testing instructions to assist user review. Agents must NOT directly mark tasks as 'done'.")]
+    #[tool(description = "提交任务待验证方案并移入待验证列（verify）。Agent 必须使用纯中文提供实现方案、交付情况及测试验证说明，严禁使用 emoji，严禁自行直接标记为完成（done）。")]
     async fn submit_task_verification(
         &self,
         Parameters(input): Parameters<SubmitTaskVerificationInput>,
@@ -845,7 +845,7 @@ impl KanboardMcp {
         };
 
         let formatted_notes = format!(
-            "### 🛠️ 实现方式\n{}\n\n### ✅ 完成情况\n{}\n\n### 🧪 验证与测试方式\n{}",
+            "### 实现方案\n{}\n\n### 交付情况\n{}\n\n### 验证与测试方式\n{}",
             input.implementation.trim(),
             input.summary.trim(),
             input.test_guide.trim(),
@@ -1431,7 +1431,7 @@ mod tests {
             .unwrap();
         let verify_content = verify_res.structured_content.unwrap();
         assert_eq!(verify_content["task"]["columnId"], "verify");
-        assert!(verify_content["task"]["reviewNotes"].as_str().unwrap().contains("### 🛠️ 实现方式"));
+        assert!(verify_content["task"]["reviewNotes"].as_str().unwrap().contains("### 实现方案"));
         assert_eq!(verify_content["verifiedPending"], true);
 
         client.cancel().await.unwrap();
