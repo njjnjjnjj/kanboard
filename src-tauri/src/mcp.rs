@@ -72,6 +72,13 @@ pub struct CodexConnection {
     opened: bool,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AntigravityConnection {
+    pub config_path: String,
+    pub configured: bool,
+}
+
 impl McpState {
     async fn status(&self) -> McpStatus {
         let controller = self.controller.lock().await;
@@ -262,6 +269,58 @@ pub async fn connect_codex(
         marketplace_path: marketplace_path.to_string_lossy().into_owned(),
         deep_link,
         opened,
+    })
+}
+
+#[tauri::command]
+pub async fn connect_antigravity(
+    app: AppHandle,
+    state: tauri::State<'_, McpState>,
+) -> Result<AntigravityConnection, String> {
+    state.set_enabled(true).await?;
+    let home = app.path().home_dir().map_err(error)?;
+    let gemini_config_dir = home.join(".gemini").join("config");
+    fs::create_dir_all(&gemini_config_dir).map_err(error)?;
+    let mcp_config_path = gemini_config_dir.join("mcp_config.json");
+
+    let mut config: Value = if mcp_config_path.exists() {
+        let content = fs::read_to_string(&mcp_config_path).unwrap_or_default();
+        if content.trim().is_empty() {
+            json!({})
+        } else {
+            serde_json::from_str(&content).unwrap_or_else(|_| json!({}))
+        }
+    } else {
+        json!({})
+    };
+
+    if !config.is_object() {
+        config = json!({});
+    }
+
+    let servers = config
+        .as_object_mut()
+        .unwrap()
+        .entry("mcpServers")
+        .or_insert_with(|| json!({}));
+
+    if !servers.is_object() {
+        *servers = json!({});
+    }
+
+    servers.as_object_mut().unwrap().insert(
+        "kanboard".to_string(),
+        json!({
+            "serverUrl": MCP_URL
+        }),
+    );
+
+    let formatted = serde_json::to_string_pretty(&config).map_err(error)?;
+    fs::write(&mcp_config_path, formatted).map_err(error)?;
+
+    Ok(AntigravityConnection {
+        config_path: mcp_config_path.to_string_lossy().into_owned(),
+        configured: true,
     })
 }
 

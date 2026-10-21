@@ -116,4 +116,21 @@ describe("SettingsPanel", () => {
     expect(invoke).toHaveBeenCalledWith("connect_codex");
     expect(wrapper.text()).toContain("已打开 Codex");
   });
+
+  it("configures Antigravity connection", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_storage_info") return Promise.resolve({ path: "C:\\data\\kanboard.db", directory: "C:\\data", version: "0.1.0" });
+      if (command === "get_mcp_status") return Promise.resolve({ enabled: true, running: true, url: "http://127.0.0.1:47831/mcp", lastError: null });
+      if (command === "connect_antigravity") return Promise.resolve({ configPath: "C:\\Users\\user\\.gemini\\config\\mcp_config.json", configured: true });
+      return Promise.resolve(undefined);
+    });
+    const wrapper = mount(SettingsPanel, { props: { open: true } });
+    await flushPromises();
+
+    await wrapper.findAll("button").find((button) => button.text() === "连接到 Antigravity")!.trigger("click");
+    await flushPromises();
+
+    expect(invoke).toHaveBeenCalledWith("connect_antigravity");
+    expect(wrapper.text()).toContain("已成功配置 Antigravity！");
+  });
 });

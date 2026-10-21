@@ -28,6 +28,7 @@ const message = ref("");
 const mcpStatus = ref<McpStatus | null>(null);
 const mcpLoading = ref(false);
 const codexLoading = ref(false);
+const antigravityLoading = ref(false);
 
 watch(() => props.open, async (visible) => {
   if (!visible) return;
@@ -165,6 +166,21 @@ async function connectCodex() {
     codexLoading.value = false;
   }
 }
+
+async function connectAntigravity() {
+  if (antigravityLoading.value) return;
+  antigravityLoading.value = true;
+  message.value = "";
+  try {
+    const result = await invoke<{ configPath: string; configured: boolean }>("connect_antigravity");
+    mcpStatus.value = await invoke<McpStatus>("get_mcp_status");
+    message.value = `已成功配置 Antigravity！配置已写入 ${result.configPath}。`;
+  } catch (error) {
+    message.value = `无法连接 Antigravity：${String(error)}`;
+  } finally {
+    antigravityLoading.value = false;
+  }
+}
 </script>
 
 <template>
@@ -222,11 +238,14 @@ async function connectCodex() {
           </div>
           <p v-if="mcpStatus?.lastError" class="settings-panel__service-error">{{ mcpStatus.lastError }}</p>
           <div class="settings-panel__actions">
-            <button class="secondary-button" type="button" :disabled="codexLoading || mcpLoading" @click="connectCodex">
+            <button class="secondary-button" type="button" :disabled="codexLoading || antigravityLoading || mcpLoading" @click="connectCodex">
               {{ codexLoading ? "正在连接…" : "连接到 Codex" }}
             </button>
+            <button class="secondary-button" type="button" :disabled="codexLoading || antigravityLoading || mcpLoading" @click="connectAntigravity">
+              {{ antigravityLoading ? "正在连接…" : "连接到 Antigravity" }}
+            </button>
           </div>
-          <small>连接会自动开启 MCP 服务，并在 Codex 中打开本地 Kanboard Agent 插件。服务仅监听 127.0.0.1，重新启动看板后会自动恢复。</small>
+          <small>连接会自动开启 MCP 服务，并写入对应 Agent 的本地插件或配置。服务仅监听 127.0.0.1，重新启动看板后会自动恢复。</small>
         </section>
 
         <section>

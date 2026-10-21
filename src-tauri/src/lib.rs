@@ -146,6 +146,7 @@ pub fn run() {
             mcp::get_mcp_status,
             mcp::set_mcp_enabled,
             mcp::connect_codex,
+            mcp::connect_antigravity,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run kanboard application");
