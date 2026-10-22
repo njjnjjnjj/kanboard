@@ -34,6 +34,6 @@ describe("flow onboarding", () => {
     ]);
     expect(config.onDestroyed).toBeTypeOf("function");
     (config.onDestroyed as unknown as () => void)();
-    expect(localStorage.getItem("kanboard.flow-onboarding.v3")).toBe("seen");
+    expect(localStorage.getItem("kanboard.flow-onboarding.v4")).toBe("seen");
   });
 });

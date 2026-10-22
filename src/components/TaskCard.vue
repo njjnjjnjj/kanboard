@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 import { elapsedLabel, isAgingWarning } from "../flowTime";
 import { buildAgentTaskPrompt } from "../drag/agentPrompt";
 import type { Task } from "../types";
@@ -13,6 +13,40 @@ const emit = defineEmits<{
   select: [taskId: string];
   toggle: [task: Task];
 }>();
+
+const copied = ref(false);
+let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function copyPrompt(event: Event) {
+  event.stopPropagation();
+  const prompt = buildAgentTaskPrompt(props.task);
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(prompt);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = prompt;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    copied.value = true;
+    if (copiedTimer) clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => {
+      copied.value = false;
+      copiedTimer = null;
+    }, 1500);
+  } catch (error) {
+    console.error("Failed to copy prompt:", error);
+  }
+}
+
+onBeforeUnmount(() => {
+  if (copiedTimer) clearTimeout(copiedTimer);
+});
 
 const isDone = computed(() => props.task.columnId === "done");
 const toggleLabel = computed(() => {
@@ -129,5 +163,22 @@ function selectFromKeyboard(event: KeyboardEvent) {
     <p v-if="task.columnId === 'blocked' && task.blockedReason" class="task-card__blocked-reason">
       {{ blockedReasonLabels[task.blockedReason] }}
     </p>
+    <button
+      class="task-card__copy-btn"
+      :class="{ 'task-card__copy-btn--copied': copied }"
+      type="button"
+      :title="copied ? '已复制 AI 派发 Prompt' : '复制 AI 派发 Prompt'"
+      :aria-label="copied ? '已复制 AI 派发 Prompt' : '复制 AI 派发 Prompt'"
+      @click.stop="copyPrompt"
+      @keydown.stop
+    >
+      <svg v-if="copied" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m3.5 8.2 2.7 2.7 6.3-6.3" />
+      </svg>
+      <svg v-else viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
+        <path d="M10.5 5.5V3.5a1.5 1.5 0 0 0-1.5-1.5H3.5a1.5 1.5 0 0 0-1.5 1.5V9.5a1.5 1.5 0 0 0 1.5 1.5h2" />
+      </svg>
+    </button>
   </article>
 </template>

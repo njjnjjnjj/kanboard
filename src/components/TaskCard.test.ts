@@ -88,4 +88,30 @@ describe("TaskCard native drag", () => {
     await wrapper.get(".task-card__check").trigger("click");
     expect(wrapper.emitted("toggle")).toHaveLength(1);
   });
+
+  it("renders copy prompt button at bottom right and copies prompt to clipboard without selecting card", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    });
+
+    const wrapper = mount(TaskCard, {
+      props: { task: mockTask, selected: false },
+    });
+
+    const copyBtn = wrapper.get(".task-card__copy-btn");
+    expect(copyBtn.attributes("title")).toBe("复制 AI 派发 Prompt");
+    expect(copyBtn.attributes("type")).toBe("button");
+
+    await copyBtn.trigger("click");
+
+    expect(writeText).toHaveBeenCalledWith(
+      expect.stringContaining("【看板任务】优化APP启动速度"),
+    );
+    expect(writeText).toHaveBeenCalledWith(
+      expect.stringContaining("D:/workspace/medchat-edge"),
+    );
+    expect(wrapper.emitted("select")).toBeUndefined();
+    expect(copyBtn.classes()).toContain("task-card__copy-btn--copied");
+  });
 });

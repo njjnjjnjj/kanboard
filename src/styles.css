@@ -630,6 +630,55 @@ kbd {
 .task-card--done h3 { color: #747770; text-decoration: line-through; text-decoration-thickness: 1px; }
 .task-card--done .task-card__meta { opacity: .6; }
 
+.task-card__copy-btn {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, background-color 120ms ease, border-color 120ms ease, color 120ms ease, transform 110ms var(--ease-out);
+  z-index: 2;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .task-card:hover .task-card__copy-btn,
+  .task-card:focus-within .task-card__copy-btn {
+    opacity: .82;
+  }
+}
+
+@media (hover: none) {
+  .task-card__copy-btn {
+    opacity: .72;
+  }
+}
+
+.task-card__copy-btn:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, .05);
+  border-color: rgba(130, 128, 120, .28);
+  color: var(--ink-strong);
+}
+
+.task-card__copy-btn:active {
+  transform: scale(.95);
+}
+
+.task-card__copy-btn--copied {
+  opacity: 1 !important;
+  color: var(--accent);
+}
+
 .task-inspector {
   width: min(680px, 56vw, calc(100% - 24px));
   height: 100%;
