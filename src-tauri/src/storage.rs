@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     fs,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -21,7 +21,7 @@ const IMPORT_MARKER: &str = "import-pending.json";
 
 pub struct StorageState {
     config_dir: PathBuf,
-    current: Mutex<PathBuf>,
+    current: Arc<Mutex<PathBuf>>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -55,7 +55,7 @@ fn run_async<F: std::future::Future>(future: F) -> F::Output {
     }
 }
 
-fn migrations() -> Migrator {
+pub(crate) fn migrations() -> Migrator {
     let entries = [
         (
             1,
@@ -81,6 +81,16 @@ fn migrations() -> Migrator {
             5,
             "add_task_trash",
             include_str!("../migrations/0005_task_trash.sql"),
+        ),
+        (
+            6,
+            "add_project_path",
+            include_str!("../migrations/0006_project_path.sql"),
+        ),
+        (
+            7,
+            "add_task_review_notes",
+            include_str!("../migrations/0007_task_review.sql"),
         ),
     ];
     Migrator {
@@ -217,8 +227,12 @@ pub fn initialize(app: &AppHandle) -> Result<StorageState, String> {
     run_async(migrate(&path))?;
     Ok(StorageState {
         config_dir,
-        current: Mutex::new(path),
+        current: Arc::new(Mutex::new(path)),
     })
+}
+
+pub(crate) fn current_path_handle(state: &StorageState) -> Arc<Mutex<PathBuf>> {
+    state.current.clone()
 }
 
 #[tauri::command]

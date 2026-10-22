@@ -20,6 +20,7 @@ const draft = reactive<ProjectChanges>({
   name: "",
   color: colors[0],
   description: "",
+  path: "",
   targetDate: null,
   status: "active",
 });
@@ -31,6 +32,7 @@ watch(
     draft.color = props.project?.color ?? colors[0];
     customColorActive.value = !colors.includes(draft.color);
     draft.description = props.project?.description ?? "";
+    draft.path = props.project?.path ?? "";
     draft.targetDate = props.project?.targetDate ?? null;
     draft.status = props.project?.status ?? "active";
   },
@@ -40,7 +42,7 @@ watch(
 function submit() {
   const name = draft.name.trim();
   if (!name) return;
-  emit("save", { ...draft, name, description: draft.description.trim(), targetDate: draft.targetDate || null });
+  emit("save", { ...draft, name, description: draft.description.trim(), path: draft.path.trim(), targetDate: draft.targetDate || null });
 }
 </script>
 
@@ -84,6 +86,11 @@ function submit() {
       <label class="field">
         <span>项目说明</span>
         <textarea v-model="draft.description" rows="5" placeholder="记录目标、背景、资料位置或完成标准" />
+      </label>
+
+      <label class="field">
+        <span>本地路径</span>
+        <input v-model="draft.path" placeholder="例如 D:/MyWorkspace/project-name 或代码库绝对路径" autocomplete="off" />
       </label>
 
       <div class="field">

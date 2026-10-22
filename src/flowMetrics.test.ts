@@ -6,7 +6,7 @@ const task = (id: string, startedAt: string): Task => ({
   id, columnId: "doing", projectId: null, project: null, tags: [], title: id,
   description: "", dueDate: null, priority: "none", position: 1000,
   completedAt: null, startedAt, blockedReason: null, blockedSince: null,
-  checklist: [], recurrenceRule: "none",
+  checklist: [], recurrenceRule: "none", reviewNotes: "",
   createdAt: startedAt, updatedAt: startedAt,
 });
 

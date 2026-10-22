@@ -1,0 +1,1443 @@
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    fs,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
+
+use axum::Router;
+use chrono::{DateTime, Duration, Local, Utc};
+use rmcp::{
+    handler::server::wrapper::Parameters,
+    model::CallToolResult,
+    schemars, tool, tool_router,
+    transport::streamable_http_server::{
+        session::local::LocalSessionManager, StreamableHttpServerConfig,
+        StreamableHttpService,
+    },
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use sqlx::{sqlite::SqliteConnectOptions, Row, SqlitePool};
+use tauri::{AppHandle, Emitter, Manager};
+use tokio::{net::TcpListener, sync::Mutex as AsyncMutex, task::JoinHandle};
+use tokio_util::sync::CancellationToken;
+
+const MCP_PORT: u16 = 47_831;
+const MCP_SETTINGS_FILE: &str = "mcp-settings.json";
+const MCP_URL: &str = "http://127.0.0.1:47831/mcp";
+const PLUGIN_NAME: &str = "kanboard-agent";
+const MARKETPLACE_NAME: &str = "kanboard-local";
+
+const PLUGIN_MANIFEST: &str = include_str!("../../plugins/kanboard-agent/.codex-plugin/plugin.json");
+const PLUGIN_MCP: &str = include_str!("../../plugins/kanboard-agent/.mcp.json");
+const PLUGIN_SKILL: &str = include_str!("../../plugins/kanboard-agent/skills/kanboard-assistant/SKILL.md");
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct McpSettings {
+    enabled: bool,
+}
+
+struct ServerProcess {
+    cancellation: CancellationToken,
+    task: JoinHandle<()>,
+}
+
+struct McpController {
+    enabled: bool,
+    process: Option<ServerProcess>,
+    last_error: Option<String>,
+}
+
+pub struct McpState {
+    app: Option<AppHandle>,
+    settings_path: PathBuf,
+    database_path: Arc<Mutex<PathBuf>>,
+    controller: AsyncMutex<McpController>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpStatus {
+    enabled: bool,
+    running: bool,
+    url: &'static str,
+    last_error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexConnection {
+    marketplace_path: String,
+    deep_link: String,
+    opened: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AntigravityConnection {
+    pub config_path: String,
+    pub configured: bool,
+}
+
+impl McpState {
+    async fn status(&self) -> McpStatus {
+        let controller = self.controller.lock().await;
+        McpStatus {
+            enabled: controller.enabled,
+            running: controller
+                .process
+                .as_ref()
+                .is_some_and(|process| !process.task.is_finished()),
+            url: MCP_URL,
+            last_error: controller.last_error.clone(),
+        }
+    }
+
+    async fn set_enabled(&self, enabled: bool) -> Result<McpStatus, String> {
+        if enabled {
+            self.start().await?;
+            self.save_settings(true)?;
+            let mut controller = self.controller.lock().await;
+            controller.enabled = true;
+        } else {
+            self.save_settings(false)?;
+            self.stop().await;
+            let mut controller = self.controller.lock().await;
+            controller.enabled = false;
+            controller.last_error = None;
+        }
+        Ok(self.status().await)
+    }
+
+    async fn start(&self) -> Result<(), String> {
+        let mut controller = self.controller.lock().await;
+        if controller
+            .process
+            .as_ref()
+            .is_some_and(|process| !process.task.is_finished())
+        {
+            controller.last_error = None;
+            return Ok(());
+        }
+
+        controller.process = None;
+        let listener = TcpListener::bind(("127.0.0.1", MCP_PORT))
+            .await
+            .map_err(|error| format!("无法启动 MCP 服务：{error}"))?;
+        let cancellation = CancellationToken::new();
+        let database_path = self.database_path.clone();
+        let app = self.app.clone();
+        let service_cancellation = cancellation.child_token();
+        let shutdown = cancellation.clone();
+        let service = StreamableHttpService::new(
+            move || Ok(KanboardMcp::new(database_path.clone(), app.clone())),
+            LocalSessionManager::default().into(),
+            StreamableHttpServerConfig::default()
+                .with_json_response(true)
+                .with_cancellation_token(service_cancellation),
+        );
+        let router = Router::new().nest_service("/mcp", service);
+        let task = tokio::spawn(async move {
+            if let Err(error) = axum::serve(listener, router)
+                .with_graceful_shutdown(shutdown.cancelled_owned())
+                .await
+            {
+                eprintln!("MCP server stopped unexpectedly: {error}");
+            }
+        });
+        controller.process = Some(ServerProcess { cancellation, task });
+        controller.last_error = None;
+        Ok(())
+    }
+
+    async fn stop(&self) {
+        let process = self.controller.lock().await.process.take();
+        if let Some(process) = process {
+            process.cancellation.cancel();
+            let _ = process.task.await;
+        }
+    }
+
+    fn save_settings(&self, enabled: bool) -> Result<(), String> {
+        fs::write(
+            &self.settings_path,
+            serde_json::to_vec_pretty(&McpSettings { enabled }).map_err(error)?,
+        )
+        .map_err(error)
+    }
+}
+
+pub async fn initialize(
+    app: &AppHandle,
+    database_path: Arc<Mutex<PathBuf>>,
+) -> Result<McpState, String> {
+    let config_dir = app.path().app_config_dir().map_err(error)?;
+    fs::create_dir_all(&config_dir).map_err(error)?;
+    let settings_path = config_dir.join(MCP_SETTINGS_FILE);
+    let settings = if settings_path.is_file() {
+        serde_json::from_slice::<McpSettings>(&fs::read(&settings_path).map_err(error)?)
+            .map_err(error)?
+    } else {
+        McpSettings::default()
+    };
+    let state = McpState {
+        app: Some(app.clone()),
+        settings_path,
+        database_path,
+        controller: AsyncMutex::new(McpController {
+            enabled: settings.enabled,
+            process: None,
+            last_error: None,
+        }),
+    };
+    if settings.enabled {
+        if let Err(start_error) = state.start().await {
+            state.controller.lock().await.last_error = Some(start_error);
+        }
+    }
+    Ok(state)
+}
+
+#[tauri::command]
+pub async fn get_mcp_status(state: tauri::State<'_, McpState>) -> Result<McpStatus, String> {
+    Ok(state.status().await)
+}
+
+#[tauri::command]
+pub async fn set_mcp_enabled(
+    enabled: bool,
+    state: tauri::State<'_, McpState>,
+) -> Result<McpStatus, String> {
+    state.set_enabled(enabled).await
+}
+
+#[tauri::command]
+pub async fn connect_codex(
+    app: AppHandle,
+    state: tauri::State<'_, McpState>,
+) -> Result<CodexConnection, String> {
+    state.set_enabled(true).await?;
+    let root = app
+        .path()
+        .app_config_dir()
+        .map_err(error)?
+        .join("codex-integration");
+    let plugin = root.join("plugins").join(PLUGIN_NAME);
+    fs::create_dir_all(plugin.join(".codex-plugin")).map_err(error)?;
+    fs::create_dir_all(plugin.join("skills").join("kanboard-assistant")).map_err(error)?;
+    fs::write(plugin.join(".codex-plugin").join("plugin.json"), PLUGIN_MANIFEST)
+        .map_err(error)?;
+    fs::write(plugin.join(".mcp.json"), PLUGIN_MCP).map_err(error)?;
+    fs::write(
+        plugin
+            .join("skills")
+            .join("kanboard-assistant")
+            .join("SKILL.md"),
+        PLUGIN_SKILL,
+    )
+    .map_err(error)?;
+
+    let marketplace_dir = root.join(".agents").join("plugins");
+    fs::create_dir_all(&marketplace_dir).map_err(error)?;
+    let marketplace_path = marketplace_dir.join("marketplace.json");
+    let marketplace = json!({
+        "name": MARKETPLACE_NAME,
+        "interface": { "displayName": "Kanboard" },
+        "plugins": [{
+            "name": PLUGIN_NAME,
+            "source": { "source": "local", "path": "./plugins/kanboard-agent" },
+            "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+            "category": "Productivity"
+        }]
+    });
+    fs::write(
+        &marketplace_path,
+        serde_json::to_vec_pretty(&marketplace).map_err(error)?,
+    )
+    .map_err(error)?;
+
+    let legacy_marketplace_path = root.join("marketplace.json");
+    if legacy_marketplace_path.exists() {
+        let _ = fs::remove_file(legacy_marketplace_path);
+    }
+
+    let mut deep_link = url::Url::parse("codex://plugins/kanboard-agent").map_err(error)?;
+    deep_link
+        .query_pairs_mut()
+        .append_pair("marketplacePath", &marketplace_path.to_string_lossy());
+    let deep_link = deep_link.to_string();
+    let opened = open::that(&deep_link).is_ok();
+    Ok(CodexConnection {
+        marketplace_path: marketplace_path.to_string_lossy().into_owned(),
+        deep_link,
+        opened,
+    })
+}
+
+#[tauri::command]
+pub async fn connect_antigravity(
+    app: AppHandle,
+    state: tauri::State<'_, McpState>,
+) -> Result<AntigravityConnection, String> {
+    state.set_enabled(true).await?;
+    let home = app.path().home_dir().map_err(error)?;
+    let gemini_config_dir = home.join(".gemini").join("config");
+    fs::create_dir_all(&gemini_config_dir).map_err(error)?;
+    let mcp_config_path = gemini_config_dir.join("mcp_config.json");
+
+    let mut config: Value = if mcp_config_path.exists() {
+        let content = fs::read_to_string(&mcp_config_path).unwrap_or_default();
+        if content.trim().is_empty() {
+            json!({})
+        } else {
+            serde_json::from_str(&content).unwrap_or_else(|_| json!({}))
+        }
+    } else {
+        json!({})
+    };
+
+    if !config.is_object() {
+        config = json!({});
+    }
+
+    let servers = config
+        .as_object_mut()
+        .unwrap()
+        .entry("mcpServers")
+        .or_insert_with(|| json!({}));
+
+    if !servers.is_object() {
+        *servers = json!({});
+    }
+
+    servers.as_object_mut().unwrap().insert(
+        "kanboard".to_string(),
+        json!({
+            "serverUrl": MCP_URL
+        }),
+    );
+
+    let formatted = serde_json::to_string_pretty(&config).map_err(error)?;
+    fs::write(&mcp_config_path, formatted).map_err(error)?;
+
+    Ok(AntigravityConnection {
+        config_path: mcp_config_path.to_string_lossy().into_owned(),
+        configured: true,
+    })
+}
+
+fn error(value: impl std::fmt::Display) -> String {
+    value.to_string()
+}
+
+fn mcp_error(value: impl std::fmt::Display) -> rmcp::ErrorData {
+    rmcp::ErrorData::internal_error(value.to_string(), None)
+}
+
+#[derive(Clone)]
+struct KanboardMcp {
+    database_path: Arc<Mutex<PathBuf>>,
+    app: Option<AppHandle>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ListTasksInput {
+    /// Filter by column/status id, for example ready, doing, blocked, verify, or done.
+    status: Option<String>,
+    /// Filter by project id.
+    project_id: Option<String>,
+    /// Filter by tag name, case-insensitive.
+    tag: Option<String>,
+    /// Filter by priority: high or none.
+    priority: Option<String>,
+    /// Include tasks due on or before this YYYY-MM-DD date.
+    due_before: Option<String>,
+    /// Include soft-deleted tasks instead of active tasks.
+    #[serde(default)]
+    include_deleted: bool,
+    /// Maximum number of tasks to return, from 1 to 200. Defaults to 50.
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct TaskIdInput {
+    /// Stable task id.
+    task_id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SearchTasksInput {
+    /// Text to search in task titles and descriptions.
+    query: String,
+    /// Include soft-deleted tasks.
+    #[serde(default)]
+    include_deleted: bool,
+    /// Maximum number of matches, from 1 to 100. Defaults to 20.
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct EventsInput {
+    /// Optional stable task id. Omit to return recent events across active tasks.
+    task_id: Option<String>,
+    /// Maximum number of events, from 1 to 500. Defaults to 100.
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct UpdateTaskStatusInput {
+    /// Stable task id.
+    task_id: String,
+    /// Target column/status id, for example ready, doing, blocked, verify, or done.
+    status: String,
+    /// Reason category when moving to blocked: people, hardware, environment, feedback, technical, dependency, other.
+    reason: Option<String>,
+    /// Optional comment explaining the transition.
+    comment: Option<String>,
+    /// Optional structured review/verification notes (typically when moving to verify).
+    review_notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SubmitTaskVerificationInput {
+    /// 任务唯一 ID。
+    task_id: String,
+    /// 核心实现方案。严禁单行推到底！可读性优先：多模块/文件改动时必须优先使用 Markdown 表格 `| 模块/文件 | 改动类型 | 核心逻辑说明 |` 或多层级列表清晰分步呈现，中英文及数字间加空格，严禁包含 emoji。
+    implementation: String,
+    /// 交付情况与达成成果。严禁单行长句！必须使用 Markdown 复选清单 `- [x]` 或表格分项逐条罗列功能点、关键产物及 Checklist 完成情况，中英文及数字间加空格，严禁包含 emoji。
+    summary: String,
+    /// 验证与测试方式。严禁无分段堆叠！必须优先使用表格 `| 验证项 | 测试命令 / 操作路径 | 预期效果 |` 或带语言标签的代码块清晰列出验收方式，中英文及数字间加空格，严禁包含 emoji。
+    test_guide: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SetTaskBlockedInput {
+    /// Stable task id.
+    task_id: String,
+    /// Reason category for the block: technical, dependency, environment, feedback, people, hardware, other.
+    reason: String,
+    /// Detailed description of the error, failure, missing dependency, or required human action.
+    detail: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct UpdateChecklistItemInput {
+    /// Stable task id.
+    task_id: String,
+    /// Stable checklist item id.
+    item_id: String,
+    /// Completion state.
+    completed: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct AppendTaskNotesInput {
+    /// Stable task id.
+    task_id: String,
+    /// Progress notes, execution results, or error details to append to the task description.
+    notes: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SetProjectPathInput {
+    /// Stable project id.
+    project_id: String,
+    /// Absolute local filesystem directory path of the project/repository.
+    path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TagData {
+    id: String,
+    name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChecklistData {
+    id: String,
+    text: String,
+    completed: bool,
+    position: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectRef {
+    id: String,
+    name: String,
+    color: String,
+    path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskData {
+    id: String,
+    column_id: String,
+    project_id: Option<String>,
+    project: Option<ProjectRef>,
+    tags: Vec<TagData>,
+    title: String,
+    description: String,
+    due_date: Option<String>,
+    priority: String,
+    position: i64,
+    completed_at: Option<String>,
+    started_at: Option<String>,
+    blocked_reason: Option<String>,
+    blocked_since: Option<String>,
+    checklist: Vec<ChecklistData>,
+    recurrence_rule: String,
+    review_notes: String,
+    created_at: String,
+    updated_at: String,
+    deleted_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EventData {
+    task_id: String,
+    from_status: Option<String>,
+    to_status: String,
+    created_at: String,
+}
+
+impl KanboardMcp {
+    fn new(database_path: Arc<Mutex<PathBuf>>, app: Option<AppHandle>) -> Self {
+        Self { database_path, app }
+    }
+
+    fn emit_task_updated(&self) {
+        if let Some(app) = &self.app {
+            let _ = app.emit("mcp:task-updated", ());
+        }
+    }
+
+    fn emit_task_blocked(&self, task_id: &str, title: &str, reason: &str, detail: &str) {
+        if let Some(app) = &self.app {
+            let _ = app.emit(
+                "mcp:task-blocked",
+                json!({
+                    "taskId": task_id,
+                    "title": title,
+                    "reason": reason,
+                    "detail": detail
+                }),
+            );
+        }
+    }
+}
+
+#[tool_router(server_handler)]
+impl KanboardMcp {
+    async fn pool(&self) -> Result<SqlitePool, rmcp::ErrorData> {
+        let path = self
+            .database_path
+            .lock()
+            .map_err(mcp_error)?
+            .clone();
+        let options = SqliteConnectOptions::new()
+            .filename(path)
+            .busy_timeout(std::time::Duration::from_secs(5));
+        SqlitePool::connect_with(options).await.map_err(mcp_error)
+    }
+
+    #[tool(description = "Read the current high-signal Kanboard overview: counts by status, overdue and due-soon work, high-priority and blocked tasks, WIP limit violations, and active project counts.")]
+    async fn get_dashboard_summary(&self) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let tasks = load_tasks(&pool, false).await.map_err(mcp_error)?;
+        let columns = load_columns(&pool).await.map_err(mcp_error)?;
+        let projects = load_projects(&pool).await.map_err(mcp_error)?;
+        pool.close().await;
+        let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+        let soon = (Local::now().date_naive() + Duration::days(7))
+            .format("%Y-%m-%d")
+            .to_string();
+        let active: Vec<_> = tasks.iter().filter(|task| task.column_id != "done").collect();
+        let counts_by_status = tasks.iter().fold(BTreeMap::new(), |mut counts, task| {
+            *counts.entry(task.column_id.clone()).or_insert(0usize) += 1;
+            counts
+        });
+        let overdue: Vec<_> = active
+            .iter()
+            .filter(|task| task.due_date.as_deref().is_some_and(|date| date < today.as_str()))
+            .cloned()
+            .collect();
+        let due_soon: Vec<_> = active
+            .iter()
+            .filter(|task| {
+                task.due_date
+                    .as_deref()
+                    .is_some_and(|date| date >= today.as_str() && date <= soon.as_str())
+            })
+            .cloned()
+            .collect();
+        let high_priority: Vec<_> = active
+            .iter()
+            .filter(|task| task.priority == "high")
+            .cloned()
+            .collect();
+        let blocked: Vec<_> = active
+            .iter()
+            .filter(|task| task.column_id == "blocked")
+            .cloned()
+            .collect();
+        let wip_violations: Vec<Value> = columns
+            .iter()
+            .filter_map(|column| {
+                let count = counts_by_status.get(&column.id).copied().unwrap_or_default();
+                column.wip_limit.filter(|limit| count as i64 > *limit).map(|limit| {
+                    json!({ "columnId": column.id, "title": column.title, "count": count, "limit": limit })
+                })
+            })
+            .collect();
+        structured(json!({
+            "generatedAt": Utc::now().to_rfc3339(),
+            "totalActive": active.len(),
+            "countsByStatus": counts_by_status,
+            "overdue": overdue,
+            "dueWithin7Days": due_soon,
+            "highPriority": high_priority,
+            "blocked": blocked,
+            "wipViolations": wip_violations,
+            "projects": projects,
+        }))
+    }
+
+    #[tool(description = "List current Kanboard tasks with optional status, project, tag, priority, due-date, and deleted-task filters. Results are ordered by board position and capped.")]
+    async fn list_tasks(
+        &self,
+        Parameters(input): Parameters<ListTasksInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let mut tasks = load_tasks(&pool, input.include_deleted).await.map_err(mcp_error)?;
+        pool.close().await;
+        tasks.retain(|task| {
+            input.status.as_ref().is_none_or(|value| &task.column_id == value)
+                && input.project_id.as_ref().is_none_or(|value| task.project_id.as_ref() == Some(value))
+                && input.priority.as_ref().is_none_or(|value| &task.priority == value)
+                && input.due_before.as_ref().is_none_or(|value| task.due_date.as_ref().is_some_and(|date| date <= value))
+                && input.tag.as_ref().is_none_or(|value| task.tags.iter().any(|tag| tag.name.eq_ignore_ascii_case(value)))
+        });
+        let total = tasks.len();
+        tasks.truncate(input.limit.unwrap_or(50).clamp(1, 200));
+        structured(json!({ "total": total, "tasks": tasks }))
+    }
+
+    #[tool(description = "Get one Kanboard task by stable id, including project (with local path), tags, checklist, deletion state, and complete status-event history.")]
+    async fn get_task(
+        &self,
+        Parameters(input): Parameters<TaskIdInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let mut tasks = load_all_tasks(&pool).await.map_err(mcp_error)?;
+        let task = tasks
+            .drain(..)
+            .find(|task| task.id == input.task_id)
+            .ok_or_else(|| rmcp::ErrorData::invalid_params("找不到任务", None))?;
+        let events = load_events(&pool, Some(&input.task_id), 500)
+            .await
+            .map_err(mcp_error)?;
+        pool.close().await;
+        structured(json!({ "task": task, "events": events }))
+    }
+
+    #[tool(description = "Search task titles and descriptions using case-insensitive text matching. Can include the recycle bin.")]
+    async fn search_tasks(
+        &self,
+        Parameters(input): Parameters<SearchTasksInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let query = input.query.trim().to_lowercase();
+        if query.is_empty() {
+            return Err(rmcp::ErrorData::invalid_params("搜索内容不能为空", None));
+        }
+        let pool = self.pool().await?;
+        let mut tasks = load_tasks(&pool, input.include_deleted).await.map_err(mcp_error)?;
+        pool.close().await;
+        tasks.retain(|task| {
+            task.title.to_lowercase().contains(&query)
+                || task.description.to_lowercase().contains(&query)
+        });
+        let total = tasks.len();
+        tasks.truncate(input.limit.unwrap_or(20).clamp(1, 100));
+        structured(json!({ "query": input.query, "total": total, "tasks": tasks }))
+    }
+
+    #[tool(description = "List Kanboard projects with descriptions, local repository path, target dates, lifecycle state, and active task counts by status.")]
+    async fn list_projects(&self) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let projects = load_projects(&pool).await.map_err(mcp_error)?;
+        pool.close().await;
+        structured(json!({ "projects": projects }))
+    }
+
+    #[tool(description = "List all Kanboard tags with active task counts.")]
+    async fn list_tags(&self) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let rows = sqlx::query(
+            "SELECT tags.id, tags.name, COUNT(tasks.id) AS task_count FROM tags LEFT JOIN task_tags ON task_tags.tag_id = tags.id LEFT JOIN tasks ON tasks.id = task_tags.task_id AND tasks.deleted_at IS NULL GROUP BY tags.id, tags.name ORDER BY tags.name COLLATE NOCASE",
+        )
+        .fetch_all(&pool)
+        .await
+        .map_err(mcp_error)?;
+        pool.close().await;
+        let tags: Vec<Value> = rows
+            .into_iter()
+            .map(|row| json!({ "id": row.get::<String, _>("id"), "name": row.get::<String, _>("name"), "taskCount": row.get::<i64, _>("task_count") }))
+            .collect();
+        structured(json!({ "tags": tags }))
+    }
+
+    #[tool(description = "List status transition events for one task or recent events across active tasks.")]
+    async fn list_task_events(
+        &self,
+        Parameters(input): Parameters<EventsInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let limit = input.limit.unwrap_or(100).clamp(1, 500);
+        let pool = self.pool().await?;
+        let events = load_events(&pool, input.task_id.as_deref(), limit)
+            .await
+            .map_err(mcp_error)?;
+        pool.close().await;
+        structured(json!({ "events": events }))
+    }
+
+    #[tool(description = "Calculate the current 7-day throughput, cycle-time percentiles, 30-day blocked hours, WIP aging, long-running WIP, and 14-day cumulative-flow counts.")]
+    async fn get_flow_metrics(&self) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let tasks = load_tasks(&pool, false).await.map_err(mcp_error)?;
+        let events = load_events(&pool, None, 100_000).await.map_err(mcp_error)?;
+        pool.close().await;
+        structured(flow_metrics(&tasks, &events))
+    }
+
+    #[tool(description = "Update a task's status/column (e.g. ready, doing, blocked, verify, done). Automatically updates started_at, completed_at, records a status transition event, and notifies the desktop app.")]
+    async fn update_task_status(
+        &self,
+        Parameters(input): Parameters<UpdateTaskStatusInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let now = Utc::now().to_rfc3339();
+
+        let Some(task) = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)? else {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params("找不到任务", None));
+        };
+
+        let columns = load_columns(&pool).await.map_err(mcp_error)?;
+        if !columns.iter().any(|c| c.id == input.status) {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params(format!("无效的状态列: {}", input.status), None));
+        }
+
+        let is_done = input.status == "done";
+        let is_doing = input.status == "doing";
+        let is_blocked = input.status == "blocked";
+
+        let completed_at: Option<String> = if is_done {
+            Some(task.completed_at.clone().unwrap_or_else(|| now.clone()))
+        } else {
+            None
+        };
+
+        let started_at: Option<String> = if is_doing {
+            Some(task.started_at.clone().unwrap_or_else(|| now.clone()))
+        } else if task.column_id == "doing" {
+            task.started_at.clone()
+        } else {
+            task.started_at.clone()
+        };
+
+        let blocked_reason: Option<String> = if is_blocked {
+            Some(input.reason.clone().unwrap_or_else(|| task.blocked_reason.clone().unwrap_or_else(|| "other".to_string())))
+        } else {
+            None
+        };
+
+        let blocked_since: Option<String> = if is_blocked {
+            Some(if task.column_id == "blocked" {
+                task.blocked_since.clone().unwrap_or_else(|| now.clone())
+            } else {
+                now.clone()
+            })
+        } else {
+            None
+        };
+
+        let updated_desc = if let Some(comment) = &input.comment {
+            let trimmed = comment.trim();
+            if !trimmed.is_empty() {
+                if task.description.trim().is_empty() {
+                    trimmed.to_string()
+                } else {
+                    format!("{}\n\n[{}] {}", task.description.trim(), &now[0..19].replace('T', " "), trimmed)
+                }
+            } else {
+                task.description.clone()
+            }
+        } else {
+            task.description.clone()
+        };
+
+        let updated_review_notes = if let Some(notes) = &input.review_notes {
+            notes.clone()
+        } else {
+            task.review_notes.clone()
+        };
+
+        sqlx::query(
+            "UPDATE tasks SET column_id = ?, completed_at = ?, started_at = ?, blocked_reason = ?, blocked_since = ?, description = ?, review_notes = ?, updated_at = ? WHERE id = ?"
+        )
+        .bind(&input.status)
+        .bind(&completed_at)
+        .bind(&started_at)
+        .bind(&blocked_reason)
+        .bind(&blocked_since)
+        .bind(&updated_desc)
+        .bind(&updated_review_notes)
+        .bind(&now)
+        .bind(&input.task_id)
+        .execute(&pool)
+        .await
+        .map_err(mcp_error)?;
+
+        if task.column_id != input.status {
+            sqlx::query(
+                "INSERT INTO task_events (task_id, from_status, to_status, created_at) VALUES (?, ?, ?, ?)"
+            )
+            .bind(&input.task_id)
+            .bind(&task.column_id)
+            .bind(&input.status)
+            .bind(&now)
+            .execute(&pool)
+            .await
+            .map_err(mcp_error)?;
+        }
+
+        let updated_task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
+        pool.close().await;
+
+        self.emit_task_updated();
+        if is_blocked {
+            let reason_str = blocked_reason.as_deref().unwrap_or("other");
+            let detail_str = input.comment.as_deref().unwrap_or("已移动到阻塞");
+            self.emit_task_blocked(&input.task_id, &task.title, reason_str, detail_str);
+        }
+
+        structured(json!({ "task": updated_task }))
+    }
+
+    #[tool(description = "提交任务验证方案并移入待验证列（verify）。Agent 必须使用纯中文提供实现方案、交付情况及测试验证说明，文案排版须严格遵循中文文案排版指北（中英文及数字间规范空格），段落内支持标准 Markdown 语法，严禁使用 emoji，严禁自行直接标记为完成（done）。")]
+    async fn submit_task_verification(
+        &self,
+        Parameters(input): Parameters<SubmitTaskVerificationInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let now = Utc::now().to_rfc3339();
+
+        let Some(task) = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)? else {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params("找不到任务", None));
+        };
+
+        let formatted_notes = format!(
+            "### 1. 实现方案\n\n{}\n\n### 2. 交付成果\n\n{}\n\n### 3. 验证与测试指南\n\n{}",
+            input.implementation.trim(),
+            input.summary.trim(),
+            input.test_guide.trim(),
+        );
+
+        sqlx::query(
+            "UPDATE tasks SET column_id = 'verify', review_notes = ?, updated_at = ? WHERE id = ?"
+        )
+        .bind(&formatted_notes)
+        .bind(&now)
+        .bind(&input.task_id)
+        .execute(&pool)
+        .await
+        .map_err(mcp_error)?;
+
+        if task.column_id != "verify" {
+            sqlx::query(
+                "INSERT INTO task_events (task_id, from_status, to_status, created_at) VALUES (?, ?, 'verify', ?)"
+            )
+            .bind(&input.task_id)
+            .bind(&task.column_id)
+            .bind(&now)
+            .execute(&pool)
+            .await
+            .map_err(mcp_error)?;
+        }
+
+        let updated_task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
+        pool.close().await;
+
+        self.emit_task_updated();
+        structured(json!({ "task": updated_task, "verifiedPending": true }))
+    }
+
+    #[tool(description = "Move a task to the blocked column due to an exception, failure, missing dependency, or need for human assistance. Records structured error context and notifies the user.")]
+    async fn set_task_blocked(
+        &self,
+        Parameters(input): Parameters<SetTaskBlockedInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let now = Utc::now().to_rfc3339();
+
+        let Some(task) = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)? else {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params("找不到任务", None));
+        };
+
+        let reason = input.reason.trim().to_lowercase();
+        let detail = input.detail.trim();
+        if detail.is_empty() {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params("阻塞详情不能为空", None));
+        }
+
+        let banner = format!(
+            "\n\n> [!WARNING] 阻塞异常记录 ({})\n> **原因类型**: `{}`\n> **阻塞详情**: {}",
+            &now[0..19].replace('T', " "),
+            reason,
+            detail
+        );
+        let new_description = if task.description.trim().is_empty() {
+            banner.trim_start().to_string()
+        } else {
+            format!("{}{}", task.description.trim(), banner)
+        };
+
+        sqlx::query(
+            "UPDATE tasks SET column_id = 'blocked', blocked_reason = ?, blocked_since = ?, description = ?, updated_at = ? WHERE id = ?"
+        )
+        .bind(&reason)
+        .bind(&now)
+        .bind(&new_description)
+        .bind(&now)
+        .bind(&input.task_id)
+        .execute(&pool)
+        .await
+        .map_err(mcp_error)?;
+
+        if task.column_id != "blocked" {
+            sqlx::query(
+                "INSERT INTO task_events (task_id, from_status, to_status, created_at) VALUES (?, ?, 'blocked', ?)"
+            )
+            .bind(&input.task_id)
+            .bind(&task.column_id)
+            .bind(&now)
+            .execute(&pool)
+            .await
+            .map_err(mcp_error)?;
+        }
+
+        let updated_task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
+        pool.close().await;
+
+        self.emit_task_updated();
+        self.emit_task_blocked(&input.task_id, &task.title, &reason, detail);
+
+        structured(json!({ "task": updated_task, "blocked": true }))
+    }
+
+    #[tool(description = "Mark a task checklist item as completed (true) or pending (false).")]
+    async fn update_checklist_item(
+        &self,
+        Parameters(input): Parameters<UpdateChecklistItemInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let now = Utc::now().to_rfc3339();
+
+        let res = sqlx::query(
+            "UPDATE task_checklist_items SET completed = ? WHERE id = ? AND task_id = ?"
+        )
+        .bind(if input.completed { 1i64 } else { 0i64 })
+        .bind(&input.item_id)
+        .bind(&input.task_id)
+        .execute(&pool)
+        .await
+        .map_err(mcp_error)?;
+
+        if res.rows_affected() == 0 {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params("找不到检查项或任务不匹配", None));
+        }
+
+        sqlx::query("UPDATE tasks SET updated_at = ? WHERE id = ?")
+            .bind(&now)
+            .bind(&input.task_id)
+            .execute(&pool)
+            .await
+            .map_err(mcp_error)?;
+
+        let updated_task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
+        pool.close().await;
+
+        self.emit_task_updated();
+        structured(json!({ "task": updated_task }))
+    }
+
+    #[tool(description = "Append timestamped progress notes, execution logs, or comments to a task description.")]
+    async fn append_task_notes(
+        &self,
+        Parameters(input): Parameters<AppendTaskNotesInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let now = Utc::now().to_rfc3339();
+
+        let Some(task) = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)? else {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params("找不到任务", None));
+        };
+
+        let trimmed = input.notes.trim();
+        if trimmed.is_empty() {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params("内容不能为空", None));
+        }
+
+        let new_desc = if task.description.trim().is_empty() {
+            trimmed.to_string()
+        } else {
+            format!("{}\n\n[{}] {}", task.description.trim(), &now[0..19].replace('T', " "), trimmed)
+        };
+
+        sqlx::query("UPDATE tasks SET description = ?, updated_at = ? WHERE id = ?")
+            .bind(&new_desc)
+            .bind(&now)
+            .bind(&input.task_id)
+            .execute(&pool)
+            .await
+            .map_err(mcp_error)?;
+
+        let updated_task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
+        pool.close().await;
+
+        self.emit_task_updated();
+        structured(json!({ "task": updated_task }))
+    }
+
+    #[tool(description = "Set or update the local repository / workspace directory path for a project.")]
+    async fn set_project_path(
+        &self,
+        Parameters(input): Parameters<SetProjectPathInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let now = Utc::now().to_rfc3339();
+
+        let res = sqlx::query("UPDATE projects SET path = ?, updated_at = ? WHERE id = ?")
+            .bind(input.path.trim())
+            .bind(&now)
+            .bind(&input.project_id)
+            .execute(&pool)
+            .await
+            .map_err(mcp_error)?;
+
+        if res.rows_affected() == 0 {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params("找不到项目", None));
+        }
+
+        let projects = load_projects(&pool).await.map_err(mcp_error)?;
+        let updated_project = projects.into_iter().find(|p| p.get("id").and_then(Value::as_str) == Some(&input.project_id));
+        pool.close().await;
+
+        self.emit_task_updated();
+        structured(json!({ "project": updated_project }))
+    }
+}
+
+fn structured(value: Value) -> Result<CallToolResult, rmcp::ErrorData> {
+    Ok(CallToolResult::structured(value))
+}
+
+#[derive(Debug)]
+struct ColumnData {
+    id: String,
+    title: String,
+    wip_limit: Option<i64>,
+}
+
+async fn load_columns(pool: &SqlitePool) -> Result<Vec<ColumnData>, sqlx::Error> {
+    Ok(sqlx::query("SELECT id, title, wip_limit FROM task_columns ORDER BY position")
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|row| ColumnData {
+            id: row.get("id"),
+            title: row.get("title"),
+            wip_limit: row.get("wip_limit"),
+        })
+        .collect())
+}
+
+async fn load_projects(pool: &SqlitePool) -> Result<Vec<Value>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT p.id, p.name, p.color, p.description, p.path, p.target_date, p.status, p.created_at, p.updated_at, t.column_id, COUNT(t.id) AS task_count FROM projects p LEFT JOIN tasks t ON t.project_id = p.id AND t.deleted_at IS NULL GROUP BY p.id, p.name, p.color, p.description, p.path, p.target_date, p.status, p.created_at, p.updated_at, t.column_id ORDER BY p.status, p.name COLLATE NOCASE",
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut projects: BTreeMap<String, Value> = BTreeMap::new();
+    for row in rows {
+        let id: String = row.get("id");
+        let entry = projects.entry(id.clone()).or_insert_with(|| {
+            json!({
+                "id": id,
+                "name": row.get::<String, _>("name"),
+                "color": row.get::<String, _>("color"),
+                "description": row.get::<String, _>("description"),
+                "path": row.get::<String, _>("path"),
+                "targetDate": row.get::<Option<String>, _>("target_date"),
+                "status": row.get::<String, _>("status"),
+                "createdAt": row.get::<String, _>("created_at"),
+                "updatedAt": row.get::<String, _>("updated_at"),
+                "taskCounts": {}
+            })
+        });
+        if let Some(column_id) = row.get::<Option<String>, _>("column_id") {
+            entry["taskCounts"][column_id] = json!(row.get::<i64, _>("task_count"));
+        }
+    }
+    Ok(projects.into_values().collect())
+}
+
+async fn load_tasks(pool: &SqlitePool, deleted: bool) -> Result<Vec<TaskData>, sqlx::Error> {
+    let mut tasks = load_all_tasks(pool).await?;
+    tasks.retain(|task| task.deleted_at.is_some() == deleted);
+    Ok(tasks)
+}
+
+async fn load_task_by_id(pool: &SqlitePool, task_id: &str) -> Result<Option<TaskData>, sqlx::Error> {
+    let tasks = load_all_tasks(pool).await?;
+    Ok(tasks.into_iter().find(|t| t.id == task_id))
+}
+
+async fn load_all_tasks(pool: &SqlitePool) -> Result<Vec<TaskData>, sqlx::Error> {
+    let task_rows = sqlx::query(
+        "SELECT t.id, t.column_id, t.project_id, p.name AS project_name, p.color AS project_color, p.path AS project_path, t.title, t.description, t.due_date, t.priority, t.position, t.completed_at, t.started_at, t.blocked_reason, t.blocked_since, t.recurrence_rule, t.review_notes, t.created_at, t.updated_at, t.deleted_at FROM tasks t LEFT JOIN projects p ON p.id = t.project_id ORDER BY t.position",
+    )
+    .fetch_all(pool)
+    .await?;
+    let tag_rows = sqlx::query(
+        "SELECT task_tags.task_id, tags.id, tags.name FROM task_tags JOIN tags ON tags.id = task_tags.tag_id ORDER BY tags.name COLLATE NOCASE",
+    )
+    .fetch_all(pool)
+    .await?;
+    let checklist_rows = sqlx::query(
+        "SELECT id, task_id, text, completed, position FROM task_checklist_items ORDER BY position",
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut tags: HashMap<String, Vec<TagData>> = HashMap::new();
+    for row in tag_rows {
+        tags.entry(row.get("task_id")).or_default().push(TagData {
+            id: row.get("id"),
+            name: row.get("name"),
+        });
+    }
+    let mut checklist: HashMap<String, Vec<ChecklistData>> = HashMap::new();
+    for row in checklist_rows {
+        checklist
+            .entry(row.get("task_id"))
+            .or_default()
+            .push(ChecklistData {
+                id: row.get("id"),
+                text: row.get("text"),
+                completed: row.get::<i64, _>("completed") != 0,
+                position: row.get("position"),
+            });
+    }
+    Ok(task_rows
+        .into_iter()
+        .map(|row| {
+            let id: String = row.get("id");
+            let project_id: Option<String> = row.get("project_id");
+            let project_name: Option<String> = row.get("project_name");
+            let project_color: Option<String> = row.get("project_color");
+            TaskData {
+                id: id.clone(),
+                column_id: row.get("column_id"),
+                project: project_id.as_ref().and_then(|project_id| {
+                    Some(ProjectRef {
+                        id: project_id.clone(),
+                        name: project_name.clone()?,
+                        color: project_color.clone()?,
+                        path: row.get::<Option<String>, _>("project_path").unwrap_or_default(),
+                    })
+                }),
+                project_id,
+                tags: tags.remove(&id).unwrap_or_default(),
+                title: row.get("title"),
+                description: row.get("description"),
+                due_date: row.get("due_date"),
+                priority: row.get("priority"),
+                position: row.get("position"),
+                completed_at: row.get("completed_at"),
+                started_at: row.get("started_at"),
+                blocked_reason: row.get("blocked_reason"),
+                blocked_since: row.get("blocked_since"),
+                checklist: checklist.remove(&id).unwrap_or_default(),
+                recurrence_rule: row.get("recurrence_rule"),
+                review_notes: row.get::<Option<String>, _>("review_notes").unwrap_or_default(),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+                deleted_at: row.get("deleted_at"),
+            }
+        })
+        .collect())
+}
+
+async fn load_events(
+    pool: &SqlitePool,
+    task_id: Option<&str>,
+    limit: usize,
+) -> Result<Vec<EventData>, sqlx::Error> {
+    let rows = if let Some(task_id) = task_id {
+        sqlx::query("SELECT task_id, from_status, to_status, created_at FROM task_events WHERE task_id = ? ORDER BY created_at DESC LIMIT ?")
+            .bind(task_id)
+            .bind(limit as i64)
+            .fetch_all(pool)
+            .await?
+    } else {
+        sqlx::query("SELECT events.task_id, events.from_status, events.to_status, events.created_at FROM task_events events JOIN tasks ON tasks.id = events.task_id WHERE tasks.deleted_at IS NULL ORDER BY events.created_at DESC LIMIT ?")
+            .bind(limit as i64)
+            .fetch_all(pool)
+            .await?
+    };
+    Ok(rows
+        .into_iter()
+        .map(|row| EventData {
+            task_id: row.get("task_id"),
+            from_status: row.get("from_status"),
+            to_status: row.get("to_status"),
+            created_at: row.get("created_at"),
+        })
+        .collect())
+}
+
+fn parse_time(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|date| date.with_timezone(&Utc))
+}
+
+fn percentile(values: &mut [f64], ratio: f64) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(f64::total_cmp);
+    values.get(((values.len() as f64 * ratio).ceil() as usize).saturating_sub(1)).copied()
+}
+
+fn flow_metrics(tasks: &[TaskData], events_desc: &[EventData]) -> Value {
+    let now = Utc::now();
+    let mut by_task: HashMap<&str, Vec<&EventData>> = HashMap::new();
+    for event in events_desc.iter().rev() {
+        by_task.entry(&event.task_id).or_default().push(event);
+    }
+    let mut cycle_hours = Vec::new();
+    for events in by_task.values() {
+        if let Some(started) = events.iter().find(|event| event.to_status == "doing") {
+            if let Some(started_at) = parse_time(&started.created_at) {
+                if let Some(done_at) = events
+                    .iter()
+                    .filter(|event| event.to_status == "done")
+                    .filter_map(|event| parse_time(&event.created_at))
+                    .find(|date| *date >= started_at)
+                {
+                    cycle_hours.push((done_at - started_at).num_seconds() as f64 / 3600.0);
+                }
+            }
+        }
+    }
+    let seven_days_ago = now - Duration::days(7);
+    let throughput_7d = events_desc
+        .iter()
+        .filter(|event| event.to_status == "done")
+        .filter(|event| parse_time(&event.created_at).is_some_and(|date| date >= seven_days_ago))
+        .map(|event| &event.task_id)
+        .collect::<HashSet<_>>()
+        .len();
+    let thirty_days_ago = now - Duration::days(30);
+    let mut blocked_seconds = 0i64;
+    for events in by_task.values() {
+        for (index, event) in events.iter().enumerate() {
+            if event.to_status != "blocked" {
+                continue;
+            }
+            let Some(event_time) = parse_time(&event.created_at) else { continue };
+            let start = event_time.max(thirty_days_ago);
+            let end = events[index + 1..]
+                .iter()
+                .find(|next| next.to_status != "blocked")
+                .and_then(|next| parse_time(&next.created_at))
+                .unwrap_or(now)
+                .min(now);
+            blocked_seconds += (end - start).num_seconds().max(0);
+        }
+    }
+    let doing: Vec<_> = tasks.iter().filter(|task| task.column_id == "doing").collect();
+    let ages: Vec<i64> = doing
+        .iter()
+        .map(|task| task.started_at.as_deref().and_then(parse_time).map_or(0, |date| (now - date).num_seconds()))
+        .collect();
+    let long_wip: Vec<_> = doing
+        .iter()
+        .filter(|task| task.started_at.as_deref().and_then(parse_time).is_some_and(|date| now - date >= Duration::days(3)))
+        .collect();
+    let cfd: Vec<Value> = (0..14)
+        .map(|offset| {
+            let day = now.date_naive() - Duration::days(13 - offset);
+            let end = day.and_hms_opt(23, 59, 59).unwrap().and_utc();
+            let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+            for events in by_task.values() {
+                if let Some(latest) = events.iter().rev().find(|event| parse_time(&event.created_at).is_some_and(|date| date <= end)) {
+                    *counts.entry(&latest.to_status).or_default() += 1;
+                }
+            }
+            json!({ "date": day.format("%Y-%m-%d").to_string(), "counts": counts })
+        })
+        .collect();
+    let mut p50_values = cycle_hours.clone();
+    let median = percentile(&mut p50_values, 0.5);
+    let p85 = percentile(&mut cycle_hours, 0.85);
+    json!({
+        "generatedAt": now.to_rfc3339(),
+        "throughput7d": throughput_7d,
+        "medianCycleHours": median,
+        "p85CycleHours": p85,
+        "blockedHours30d": blocked_seconds as f64 / 3600.0,
+        "longWipTasks": long_wip,
+        "agingBuckets": [
+            { "label": "0~1 天", "count": ages.iter().filter(|age| **age < 86_400).count() },
+            { "label": "1~3 天", "count": ages.iter().filter(|age| **age >= 86_400 && **age < 259_200).count() },
+            { "label": "3~7 天", "count": ages.iter().filter(|age| **age >= 259_200 && **age < 604_800).count() },
+            { "label": ">7 天", "count": ages.iter().filter(|age| **age >= 604_800).count() }
+        ],
+        "cfd": cfd
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rmcp::{
+        model::{CallToolRequestParams, ClientConfig},
+        transport::StreamableHttpClientTransport, ServiceExt,
+    };
+    use sqlx::migrate::Migrator;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[tokio::test]
+    async fn streamable_http_lists_and_calls_read_tools() {
+        let directory = std::env::temp_dir().join(format!(
+            "kanboard-mcp-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let database = directory.join("kanboard.db");
+        let pool = SqlitePool::connect_with(
+            SqliteConnectOptions::new()
+                .filename(&database)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+        let migrator: Migrator = crate::storage::migrations();
+        migrator.run(&pool).await.unwrap();
+        pool.close().await;
+
+        let cancellation = CancellationToken::new();
+        let service = StreamableHttpService::new(
+            {
+                let database = Arc::new(Mutex::new(database.clone()));
+                move || Ok(KanboardMcp::new(database.clone(), None))
+            },
+            LocalSessionManager::default().into(),
+            StreamableHttpServerConfig::default()
+                .with_json_response(true)
+                .with_cancellation_token(cancellation.child_token()),
+        );
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let shutdown = cancellation.clone();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().nest_service("/mcp", service))
+                .with_graceful_shutdown(shutdown.cancelled_owned())
+                .await
+                .unwrap();
+        });
+
+        let transport = StreamableHttpClientTransport::from_uri(format!(
+            "http://{address}/mcp"
+        ));
+        let client = ClientConfig::default().serve(transport).await.unwrap();
+        let tools = client.list_all_tools().await.unwrap();
+        let names: HashSet<_> = tools.iter().map(|tool| tool.name.as_ref()).collect();
+        assert!(names.contains("get_dashboard_summary"));
+        assert!(names.contains("list_tasks"));
+        assert!(names.contains("get_task"));
+        assert!(names.contains("search_tasks"));
+        assert!(names.contains("list_projects"));
+        assert!(names.contains("list_tags"));
+        assert!(names.contains("list_task_events"));
+        assert!(names.contains("get_flow_metrics"));
+        assert!(names.contains("update_task_status"));
+        assert!(names.contains("set_task_blocked"));
+        assert!(names.contains("update_checklist_item"));
+        assert!(names.contains("append_task_notes"));
+        assert!(names.contains("set_project_path"));
+        assert!(names.contains("submit_task_verification"));
+
+        let result = client
+            .call_tool(CallToolRequestParams::new("get_dashboard_summary"))
+            .await
+            .unwrap();
+        assert_eq!(result.structured_content.unwrap()["totalActive"], 0);
+
+        let test_pool = SqlitePool::connect_with(
+            SqliteConnectOptions::new().filename(&database),
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO tasks (id, column_id, title, description, recurrence_rule, position, created_at, updated_at) VALUES ('task-test-1', 'doing', '测试任务', '', 'none', 1000, '2026-10-21T00:00:00Z', '2026-10-21T00:00:00Z')"
+        )
+        .execute(&test_pool)
+        .await
+        .unwrap();
+        test_pool.close().await;
+
+        let verify_res = client
+            .call_tool(
+                CallToolRequestParams::new("submit_task_verification")
+                    .with_arguments(serde_json::from_value(json!({
+                        "task_id": "task-test-1",
+                        "implementation": "| 模块 | 改动类型 | 核心逻辑说明 |\n| :--- | :--- | :--- |\n| `mcp.rs` | 接口规范 | 支持结构化表格入参 |\n| `TaskInspector.vue` | 前端组件 | 渲染 Markdown 表格与视图切换 |",
+                        "summary": "- [x] 全部 68 项前端单测通过\n- [x] 全部 2 项后端单测通过",
+                        "test_guide": "| 验证项 | 测试命令 / 操作路径 | 预期效果 |\n| :--- | :--- | :--- |\n| 前端单测 | `npm test` | 68 passed |\n| 后端测试 | `cargo test` | 2 passed |"
+                    })).unwrap())
+            )
+            .await
+            .unwrap();
+        let verify_content = verify_res.structured_content.unwrap();
+        assert_eq!(verify_content["task"]["columnId"], "verify");
+        assert!(verify_content["task"]["reviewNotes"].as_str().unwrap().contains("| 模块 | 改动类型 | 核心逻辑说明 |"));
+        assert_eq!(verify_content["verifiedPending"], true);
+
+        client.cancel().await.unwrap();
+        cancellation.cancel();
+        server.await.unwrap();
+        fs::remove_file(database).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
+}

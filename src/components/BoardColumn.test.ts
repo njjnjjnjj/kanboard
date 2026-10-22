@@ -1,6 +1,7 @@
 import { mount } from "@vue/test-utils";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { VueDraggable } from "vue-draggable-plus";
+import tauriConfig from "../../src-tauri/tauri.conf.json";
 import type { TaskColumn } from "../types";
 import BoardColumn from "./BoardColumn.vue";
 
@@ -27,6 +28,7 @@ const column: TaskColumn = {
       blockedSince: null,
       checklist: [],
       recurrenceRule: "none",
+      reviewNotes: "",
       createdAt: "2026-09-15T00:00:00.000Z",
       updatedAt: "2026-09-15T00:00:00.000Z",
     },
@@ -53,7 +55,12 @@ afterEach(() => {
 });
 
 describe("BoardColumn drag contract", () => {
-  it("allows dragging from the whole card while preserving the check control", async () => {
+  it("lets the Windows webview receive native HTML5 drops for the board", () => {
+    // Tauri's default native drop handler intercepts the HTML5 events Sortable needs.
+    expect(tauriConfig.app.windows[0]).toHaveProperty("dragDropEnabled", false);
+  });
+
+  it("allows dragging from the whole card with native drag support", async () => {
     const wrapper = mount(BoardColumn, {
       props: { column, selectedTaskId: null },
     });
@@ -63,7 +70,16 @@ describe("BoardColumn drag contract", () => {
     expect(draggable.props("draggable")).toBe(".task-card");
     expect(draggable.props("filter")).toBe(".task-card__check");
     expect(draggable.props("preventOnFilter")).toBe(false);
-    expect(draggable.props("forceFallback")).toBe(true);
+    expect(draggable.props("forceFallback")).toBe(false);
+    expect(draggable.props("setData")).toBeTypeOf("function");
+
+    const setDataFn = draggable.props("setData") as (dt: { setData: (k: string, v: string) => void; effectAllowed: string }, el: HTMLElement) => void;
+    const mockSetData = vi.fn();
+    const dataTransfer = { setData: mockSetData, effectAllowed: "" };
+    setDataFn(dataTransfer, wrapper.get("[data-task-id='task-1']").element as HTMLElement);
+    expect(mockSetData).toHaveBeenCalledWith("text/plain", expect.stringContaining("可拖动任务"));
+    expect(mockSetData).toHaveBeenCalledWith("application/x-kanboard-task-id", "task-1");
+    expect(dataTransfer.effectAllowed).toBe("copyMove");
 
     draggable.vm.$emit("start", {
       item: wrapper.get("[data-task-id='task-1']").element,

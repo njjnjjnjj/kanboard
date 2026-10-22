@@ -1,0 +1,23 @@
+{
+  "name": "kanboard-agent",
+  "version": "0.1.0",
+  "description": "Read the user's local Kanboard data for planning, prioritization, and flow analysis.",
+  "author": {
+    "name": "Kanboard"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Kanboard Agent",
+    "shortDescription": "让 Codex 读取本地看板并辅助规划。",
+    "longDescription": "通过只读 MCP 服务获取当前任务、项目、标签、阻塞情况和流效率指标。数据保留在本机。",
+    "developerName": "Kanboard",
+    "category": "Productivity",
+    "capabilities": ["Read"],
+    "defaultPrompt": [
+      "查看当前最重要的任务，并给出今天的执行顺序。",
+      "找出逾期、阻塞和进行过久的任务。",
+      "总结最近的看板流效率。"
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

@@ -1,0 +1,22 @@
+{
+  "name": "personal",
+  "name": "kanboard-local",
+  "interface": {
+    "displayName": "Personal"
+    "displayName": "Kanboard"
+  },
+  "plugins": [
+    {
+      "name": "kanboard-agent",
+      "source": {
+        "source": "local",
+        "path": "./plugins/kanboard-agent"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -1,10 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from "vue";
-import type { BlockedReason, Project, Tag, Task, TaskChanges, TaskColumn } from "../types";
+import { marked } from "marked";
 import DateInput from "./DateInput.vue";
 import TagInput from "./TagInput.vue";
 import TaskChecklist from "./TaskChecklist.vue";
 import TaskSelect from "./TaskSelect.vue";
+import type { BlockedReason, Project, Tag, Task, TaskChanges, TaskColumn } from "../types";
+
+marked.use({
+  breaks: true,
+  gfm: true,
+});
 
 const props = defineProps<{
   task: Task;
@@ -20,8 +26,13 @@ const emit = defineEmits<{
   close: [];
 }>();
 
+const TABS = ["details", "checklist", "verification"] as const;
+type TabType = typeof TABS[number];
+
 const confirmingDelete = ref(false);
-const activeTab = ref<"details" | "checklist">("details");
+const activeTab = ref<TabType>("details");
+const isEditingVerification = ref(false);
+
 const statusOptions = computed(() =>
   props.columns.map((column) => ({ value: column.id, label: column.title })),
 );
@@ -61,13 +72,27 @@ const draft = reactive<TaskChanges>({
   blockedReason: null,
   checklist: [],
   recurrenceRule: "none",
+  reviewNotes: "",
+});
+
+const renderedVerificationNotes = computed(() => {
+  if (!draft.reviewNotes?.trim()) return "";
+  try {
+    return marked.parse(draft.reviewNotes) as string;
+  } catch (err) {
+    console.error("Failed to parse markdown", err);
+    return draft.reviewNotes;
+  }
 });
 
 watch(
   () => props.task,
   (task, previousTask) => {
     confirmingDelete.value = false;
-    if (!previousTask || task.id !== previousTask.id) activeTab.value = "details";
+    if (!previousTask || task.id !== previousTask.id) {
+      activeTab.value = task.columnId === "verify" ? "verification" : "details";
+      isEditingVerification.value = false;
+    }
     draft.title = task.title;
     draft.description = task.description;
     draft.dueDate = task.dueDate;
@@ -78,6 +103,7 @@ watch(
     draft.blockedReason = task.blockedReason;
     draft.checklist = task.checklist.map((item) => ({ ...item }));
     draft.recurrenceRule = task.recurrenceRule;
+    draft.reviewNotes = task.reviewNotes || "";
   },
   { immediate: true, deep: true },
 );
@@ -109,6 +135,11 @@ function setRecurrence(value: string) {
   }
 }
 
+function passVerification() {
+  draft.columnId = "done";
+  submit();
+}
+
 function submitWithShortcut(event: KeyboardEvent) {
   if (event.ctrlKey && !event.shiftKey && event.key === "Enter") {
     event.preventDefault();
@@ -120,9 +151,12 @@ async function handleTabKeydown(event: KeyboardEvent) {
   if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
   event.preventDefault();
   const tabList = event.currentTarget as HTMLElement;
-  activeTab.value = event.key === "ArrowRight" ? "checklist" : "details";
+  const currentIndex = TABS.indexOf(activeTab.value);
+  const delta = event.key === "ArrowRight" ? 1 : -1;
+  const nextIndex = (currentIndex + delta + TABS.length) % TABS.length;
+  activeTab.value = TABS[nextIndex];
   await nextTick();
-  tabList.querySelector<HTMLButtonElement>(`[aria-selected="true"]`)?.focus();
+  tabList?.querySelector<HTMLButtonElement>(`[aria-selected="true"]`)?.focus();
 }
 </script>
 
@@ -143,8 +177,39 @@ async function handleTabKeydown(event: KeyboardEvent) {
       </label>
 
       <div class="task-inspector__tabs" role="tablist" aria-label="任务编辑内容" @keydown="handleTabKeydown">
-        <button id="task-details-tab" type="button" role="tab" aria-controls="task-details-panel" :aria-selected="activeTab === 'details'" :tabindex="activeTab === 'details' ? 0 : -1" @click="activeTab = 'details'">任务详情</button>
-        <button id="task-checklist-tab" type="button" role="tab" aria-controls="task-checklist-panel" :aria-selected="activeTab === 'checklist'" :tabindex="activeTab === 'checklist' ? 0 : -1" @click="activeTab = 'checklist'">完成条件 <span>{{ draft.checklist.filter((item) => item.completed).length }}/{{ draft.checklist.length }}</span></button>
+        <button
+          id="task-details-tab"
+          type="button"
+          role="tab"
+          aria-controls="task-details-panel"
+          :aria-selected="activeTab === 'details'"
+          :tabindex="activeTab === 'details' ? 0 : -1"
+          @click="activeTab = 'details'"
+        >
+          任务详情
+        </button>
+        <button
+          id="task-checklist-tab"
+          type="button"
+          role="tab"
+          aria-controls="task-checklist-panel"
+          :aria-selected="activeTab === 'checklist'"
+          :tabindex="activeTab === 'checklist' ? 0 : -1"
+          @click="activeTab = 'checklist'"
+        >
+          完成条件 <span>{{ draft.checklist.filter((item) => item.completed).length }}/{{ draft.checklist.length }}</span>
+        </button>
+        <button
+          id="task-verification-tab"
+          type="button"
+          role="tab"
+          aria-controls="task-verification-panel"
+          :aria-selected="activeTab === 'verification'"
+          :tabindex="activeTab === 'verification' ? 0 : -1"
+          @click="activeTab = 'verification'"
+        >
+          验证方案 <span v-if="draft.columnId === 'verify'">待验证</span>
+        </button>
       </div>
 
       <section id="task-details-panel" v-show="activeTab === 'details'" class="task-inspector__panel task-inspector__panel--details" role="tabpanel" aria-labelledby="task-details-tab">
@@ -213,6 +278,90 @@ async function handleTabKeydown(event: KeyboardEvent) {
 
       <section id="task-checklist-panel" v-show="activeTab === 'checklist'" class="task-inspector__panel task-inspector__panel--checklist" role="tabpanel" aria-labelledby="task-checklist-tab" data-tour="checklist">
         <TaskChecklist v-model="draft.checklist" />
+      </section>
+
+      <section
+        id="task-verification-panel"
+        v-show="activeTab === 'verification'"
+        class="task-inspector__panel task-inspector__panel--verification"
+        role="tabpanel"
+        aria-labelledby="task-verification-tab"
+      >
+        <div v-if="draft.columnId === 'verify'" class="task-verification__toolbar">
+          <span>当前任务等待人工核验</span>
+          <button
+            type="button"
+            class="secondary-button"
+            @click="passVerification"
+          >
+            通过验证并完成
+          </button>
+        </div>
+
+        <div class="field field--verification-notes">
+          <div class="field-header">
+            <span>验证方案说明</span>
+            <div class="verification-view-toggle">
+              <button
+                type="button"
+                class="view-toggle-btn"
+                :class="{ 'view-toggle-btn--active': !isEditingVerification }"
+                :disabled="!draft.reviewNotes.trim()"
+                @click="isEditingVerification = false"
+              >
+                预览
+              </button>
+              <button
+                type="button"
+                class="view-toggle-btn"
+                :class="{ 'view-toggle-btn--active': isEditingVerification }"
+                @click="isEditingVerification = true"
+              >
+                编辑
+              </button>
+            </div>
+          </div>
+
+          <div
+            v-if="!isEditingVerification && draft.reviewNotes.trim()"
+            class="verification-preview markdown-body"
+            data-inspector-review-preview
+            v-html="renderedVerificationNotes"
+          />
+          <div
+            v-else-if="!isEditingVerification && !draft.reviewNotes.trim()"
+            class="verification-empty"
+          >
+            <p>暂无验证方案。Agent 在提交提测时将在此生成结构化 Markdown 交付文档，你也可以点击“编辑”手动编写。</p>
+            <button
+              type="button"
+              class="secondary-button"
+              @click="isEditingVerification = true"
+            >
+              编写验证方案
+            </button>
+          </div>
+          <textarea
+            v-else
+            data-inspector-review-notes
+            v-model="draft.reviewNotes"
+            rows="16"
+            placeholder="请使用结构化 Markdown 编写验证方案（优先使用表格、清单与代码块分项呈现，避免单行堆砌）：
+
+### 1. 核心改动与实现方案
+| 模块 / 文件 | 改动说明 |
+| :--- | :--- |
+| `src/...` | 描述... |
+
+### 2. 交付成果
+- [x] 完成项 1...
+
+### 3. 测试与验证指南
+| 验证项 | 测试命令 / 操作步骤 | 预期效果 |
+| :--- | :--- | :--- |
+| 自动化单测 | `npm test` | 通过全部测试 |"
+          />
+        </div>
       </section>
 
       <footer class="task-inspector__actions">

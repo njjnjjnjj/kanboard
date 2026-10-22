@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { elapsedLabel, isAgingWarning } from "../flowTime";
+import { buildAgentTaskPrompt } from "../drag/agentPrompt";
 import type { Task } from "../types";
 
 const props = defineProps<{
@@ -60,6 +61,14 @@ const checklistProgress = computed(() => {
   return `${props.task.checklist.filter((item) => item.completed).length}/${props.task.checklist.length}`;
 });
 
+function onDragStart(event: DragEvent) {
+  if (!event.dataTransfer) return;
+  const prompt = buildAgentTaskPrompt(props.task);
+  event.dataTransfer.setData("text/plain", prompt);
+  event.dataTransfer.setData("application/x-kanboard-task-id", props.task.id);
+  event.dataTransfer.effectAllowed = "copyMove";
+}
+
 function selectFromKeyboard(event: KeyboardEvent) {
   if (event.key === "Enter" || event.key === " ") {
     event.preventDefault();
@@ -74,6 +83,8 @@ function selectFromKeyboard(event: KeyboardEvent) {
     :class="{ 'task-card--selected': selected, 'task-card--done': isDone }"
     :data-task-id="task.id"
     tabindex="0"
+    draggable="true"
+    @dragstart="onDragStart"
     @click="emit('select', task.id)"
     @keydown="selectFromKeyboard"
   >

@@ -31,6 +31,7 @@ interface TaskRow {
   projectId: string | null;
   projectName: string | null;
   projectColor: string | null;
+  projectPath: string | null;
   title: string;
   description: string;
   dueDate: string | null;
@@ -41,6 +42,7 @@ interface TaskRow {
   blockedReason: Task["blockedReason"];
   blockedSince: string | null;
   recurrenceRule: Task["recurrenceRule"];
+  reviewNotes: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -73,6 +75,7 @@ export async function loadTaskWall(): Promise<TaskColumn[]> {
               t.project_id AS projectId,
               p.name AS projectName,
               p.color AS projectColor,
+              p.path AS projectPath,
               t.title,
               t.description,
               t.due_date AS dueDate,
@@ -83,6 +86,7 @@ export async function loadTaskWall(): Promise<TaskColumn[]> {
               t.blocked_reason AS blockedReason,
               t.blocked_since AS blockedSince,
               t.recurrence_rule AS recurrenceRule,
+              t.review_notes AS reviewNotes,
               t.created_at AS createdAt,
               t.updated_at AS updatedAt
          FROM tasks t
@@ -106,7 +110,7 @@ export async function loadTaskWall(): Promise<TaskColumn[]> {
   const tasks: Task[] = taskRows.map((task) => ({
     ...task,
     project: task.projectId && task.projectName && task.projectColor
-      ? { id: task.projectId, name: task.projectName, color: task.projectColor }
+      ? { id: task.projectId, name: task.projectName, color: task.projectColor, path: task.projectPath ?? "" }
       : null,
     tags: taskTags
       .filter((tag) => tag.taskId === task.id)
@@ -131,6 +135,7 @@ export async function loadDeletedTasks(): Promise<DeletedTask[]> {
               t.project_id AS projectId,
               p.name AS projectName,
               p.color AS projectColor,
+              p.path AS projectPath,
               t.title,
               t.description,
               t.due_date AS dueDate,
@@ -141,6 +146,7 @@ export async function loadDeletedTasks(): Promise<DeletedTask[]> {
               t.blocked_reason AS blockedReason,
               t.blocked_since AS blockedSince,
               t.recurrence_rule AS recurrenceRule,
+              t.review_notes AS reviewNotes,
               t.created_at AS createdAt,
               t.updated_at AS updatedAt,
               t.deleted_at AS deletedAt
@@ -169,7 +175,7 @@ export async function loadDeletedTasks(): Promise<DeletedTask[]> {
   return taskRows.map((task) => ({
     ...task,
     project: task.projectId && task.projectName && task.projectColor
-      ? { id: task.projectId, name: task.projectName, color: task.projectColor }
+      ? { id: task.projectId, name: task.projectName, color: task.projectColor, path: task.projectPath ?? "" }
       : null,
     tags: taskTags
       .filter((tag) => tag.taskId === task.id)
@@ -223,6 +229,7 @@ export async function createTask(
     blockedSince: null,
     checklist: [],
     recurrenceRule: "none",
+    reviewNotes: "",
     createdAt: now,
     updatedAt: now,
   };
@@ -259,8 +266,9 @@ export async function updateTask(id: string, changes: TaskChanges): Promise<Tag[
               ELSE blocked_since
             END,
             recurrence_rule = $10,
+            review_notes = $11,
             updated_at = $8
-      WHERE id = $11`,
+      WHERE id = $12`,
     [
       changes.columnId,
       changes.projectId,
@@ -272,6 +280,7 @@ export async function updateTask(id: string, changes: TaskChanges): Promise<Tag[
       now,
       changes.blockedReason,
       changes.recurrenceRule,
+      changes.reviewNotes,
       id,
     ],
   );
@@ -315,7 +324,7 @@ export async function updateTask(id: string, changes: TaskChanges): Promise<Tag[
 export async function loadProjects(): Promise<Project[]> {
   const db = await database();
   return db.select<Project[]>(
-    `SELECT id, name, color, description, target_date AS targetDate,
+    `SELECT id, name, color, description, path, target_date AS targetDate,
             status, created_at AS createdAt, updated_at AS updatedAt
        FROM projects
       ORDER BY status, name COLLATE NOCASE`,
@@ -343,17 +352,17 @@ export async function saveProject(
   if (id) {
     await db.execute(
       `UPDATE projects
-          SET name = $1, color = $2, description = $3, target_date = $4,
-              status = $5, updated_at = $6
-        WHERE id = $7`,
-      [changes.name, changes.color, changes.description, changes.targetDate, changes.status, now, id],
+          SET name = $1, color = $2, description = $3, path = $4, target_date = $5,
+              status = $6, updated_at = $7
+        WHERE id = $8`,
+      [changes.name, changes.color, changes.description, changes.path, changes.targetDate, changes.status, now, id],
     );
   } else {
     await db.execute(
       `INSERT INTO projects (
-         id, name, color, description, target_date, status, created_at, updated_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
-      [projectId, changes.name, changes.color, changes.description, changes.targetDate, changes.status, now],
+         id, name, color, description, path, target_date, status, created_at, updated_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
+      [projectId, changes.name, changes.color, changes.description, changes.path, changes.targetDate, changes.status, now],
     );
   }
   return {

@@ -1,0 +1,1 @@
+ALTER TABLE tasks ADD COLUMN review_notes TEXT NOT NULL DEFAULT '';
