@@ -1,6 +1,6 @@
 import { driver } from "driver.js";
 
-const ONBOARDING_KEY = "kanboard.flow-onboarding.v2";
+const ONBOARDING_KEY = "kanboard.flow-onboarding.v3";
 
 export function startOnboarding(markSeen = true) {
   const tour = driver({
@@ -53,10 +53,19 @@ export function startOnboarding(markSeen = true) {
         },
       },
       {
+        element: "[data-tour='board-columns']",
+        popover: {
+          title: "卡片拖拽与跨应用 AI 派发",
+          description: "按住卡片可在不同列之间自由拖拽流转，或拖到底部删除区移入回收站。更支持直接将卡片拖出窗口，投递至 Codex、VS Code 等 AI 平台，自动注入包含任务详情、项目路径与 MCP 操作指令的标准 Prompt，由 AI 助手自主推进执行。",
+          side: "top",
+          align: "center",
+        },
+      },
+      {
         element: "[data-column='ready']",
         popover: {
           title: "从就绪队列拉取",
-          description: "Ready 从上到下就是优先顺序。完成手头工作后，再拉取下一项。",
+          description: "Ready 从上到下即为优先顺序。拖动卡片至「进行中」开始工作，或拖出窗口派发给 AI。",
           side: "right",
           align: "start",
         },
@@ -90,8 +99,8 @@ export function startOnboarding(markSeen = true) {
       },
       {
         popover: {
-          title: "在任务详情中定义完成",
-          description: "打开任意任务，可以添加 Checklist，并设置每天、每周或每月重复。重复任务完成后，下一次任务会自动进入就绪列。保存详情可按 Ctrl + Enter。",
+          title: "在任务详情中定义完成与验证",
+          description: "打开任意任务，可以添加 Checklist 并设置循环周期；待验证状态下可在「验证方案」Tab 中查看或编辑 Agent 提交的交付说明与测试验收指南。保存详情可按 Ctrl + Enter。",
         },
       },
       {

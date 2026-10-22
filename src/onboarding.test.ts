@@ -23,6 +23,7 @@ describe("flow onboarding", () => {
       "[data-tour='project-filter']",
       "[data-tour='search-filter']",
       "[data-tour='flow-filters']",
+      "[data-tour='board-columns']",
       "[data-column='ready']",
       "[data-column='doing']",
       "[data-column='blocked']",
@@ -33,6 +34,6 @@ describe("flow onboarding", () => {
     ]);
     expect(config.onDestroyed).toBeTypeOf("function");
     (config.onDestroyed as unknown as () => void)();
-    expect(localStorage.getItem("kanboard.flow-onboarding.v2")).toBe("seen");
+    expect(localStorage.getItem("kanboard.flow-onboarding.v3")).toBe("seen");
   });
 });

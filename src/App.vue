@@ -780,6 +780,7 @@ onBeforeUnmount(() => {
       <div
         v-if="!swimlaneMode || scope.kind === 'project'"
         class="board-columns"
+        data-tour="board-columns"
         :class="{ 'board-columns--trash-target': trashActive }"
         aria-label="个人任务墙"
       >
