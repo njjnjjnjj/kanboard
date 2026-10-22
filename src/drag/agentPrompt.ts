@@ -22,7 +22,9 @@ export function buildAgentTaskPrompt(task: Task): string {
     lines.push(`- 任务说明: ${task.description.trim()}`);
   }
   lines.push("");
-  lines.push("请按 Kanboard SOP 执行该任务：前往本地项目路径开发，完成后流转至「待验证」并附上验证指南。");
+  lines.push(
+    "请按 Kanboard SOP 执行该任务：前往本地项目路径开发，完成后流转至「待验证」并提交验证方案（可读性优先：必要时使用表格、清单与代码块分项排版，避免单行堆砌，严格遵守中文文案排版指北，严禁使用 emoji）。",
+  );
 
   return lines.join("\n");
 }

@@ -361,4 +361,69 @@ describe("personal task wall", () => {
     expect(repository.saveTaskOrder).toHaveBeenCalled();
     wrapper.unmount();
   });
+
+  it.each(["todo", "doing"])("saves an internal native drop into %s", async (targetColumnId) => {
+    const initialWall = wall();
+    const secondTask = { ...existingTask, id: "task-2", title: "第二个任务", position: 2000 };
+    initialWall[0]!.tasks.push(secondTask);
+    repository.loadTaskWall.mockResolvedValue(initialWall);
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+    const sourceColumn = wrapper.findAllComponents(VueDraggable)[0]!;
+    const targetColumn = wrapper.findAllComponents(VueDraggable)[targetColumnId === "todo" ? 0 : 3]!;
+    const card = wrapper.get("[data-task-id='task-1']").element;
+
+    sourceColumn.vm.$emit("start", { item: card, oldDraggableIndex: 0 });
+    sourceColumn.vm.$emit("update:modelValue", [secondTask]);
+    targetColumn.vm.$emit("update:modelValue", targetColumnId === "todo"
+      ? [secondTask, { ...existingTask }]
+      : [{ ...existingTask }]);
+    await wrapper.vm.$nextTick();
+
+    const target = wrapper.get(`[data-column='${targetColumnId}'] .board-column__tasks`);
+    const dragOver = new Event("dragover", { bubbles: true, cancelable: true });
+    const dataTransfer = { dropEffect: "none" };
+    Object.defineProperty(dragOver, "dataTransfer", { value: dataTransfer });
+    target.element.dispatchEvent(dragOver);
+    expect(dragOver.defaultPrevented).toBe(true);
+    expect(dataTransfer.dropEffect).toBe("move");
+    await target.trigger("drop");
+    sourceColumn.vm.$emit("end", { item: card, originalEvent: { clientX: 600, clientY: 240 } });
+    await flushPromises();
+
+    expect(repository.saveTaskOrder).toHaveBeenCalledTimes(1);
+    const savedColumns = repository.saveTaskOrder.mock.calls[0]![0] as TaskColumn[];
+    expect(savedColumns.find((column) => column.id === targetColumnId)!.tasks.map((task) => task.id))
+      .toEqual(targetColumnId === "todo" ? ["task-2", "task-1"] : ["task-1"]);
+    expect(repository.trashTask).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("reverts card state and does not save order when drag ends outside the window without an internal drop", async () => {
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+    vi.clearAllMocks();
+
+    const sourceColumn = wrapper.findAllComponents(VueDraggable)[0];
+    const card = wrapper.get("[data-task-id='task-1']").element as HTMLElement;
+
+    // Start drag
+    sourceColumn.vm.$emit("start", { item: card, oldDraggableIndex: 0 });
+    sourceColumn.vm.$emit("update:modelValue", []);
+    wrapper.findAllComponents(VueDraggable)[3]!.vm.$emit("update:modelValue", [{ ...existingTask }]);
+    await wrapper.vm.$nextTick();
+
+    // End drag without an internal drop event (e.g. dropped in Codex outside the window)
+    sourceColumn.vm.$emit("end", {
+      item: card,
+      originalEvent: { clientX: -100, clientY: -100 },
+    });
+    await flushPromises();
+
+    expect(repository.saveTaskOrder).not.toHaveBeenCalled();
+    expect(repository.trashTask).not.toHaveBeenCalled();
+    expect(wrapper.find("[data-column='todo'] [data-task-id='task-1']").exists()).toBe(true);
+    expect(wrapper.find("[data-column='doing'] [data-task-id='task-1']").exists()).toBe(false);
+    wrapper.unmount();
+  });
 });

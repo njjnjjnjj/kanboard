@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { dragPointFrom, isPointInDragTrash } from "../drag/trashDropZone";
+import { buildAgentTaskPrompt } from "../drag/agentPrompt";
 import type { Task, TaskColumn } from "../types";
 import TaskCard from "./TaskCard.vue";
 
@@ -44,6 +45,17 @@ interface SortableDragEvent {
   originalEvent?: unknown;
 }
 
+function setDragData(dataTransfer: DataTransfer, dragEl: HTMLElement) {
+  const taskId = dragEl?.dataset?.taskId;
+  if (!taskId) return;
+  const task = props.column.tasks.find((t) => t.id === taskId);
+  if (!task) return;
+  const prompt = buildAgentTaskPrompt(task);
+  dataTransfer.setData("text/plain", prompt);
+  dataTransfer.setData("application/x-kanboard-task-id", taskId);
+  dataTransfer.effectAllowed = "copyMove";
+}
+
 function startDrag(event: SortableDragEvent) {
   emit("dragStart", {
     taskId: event.item?.dataset?.taskId ?? "",
@@ -83,11 +95,10 @@ function endDrag(event: SortableDragEvent) {
       :group="{ name: dragGroup ?? 'personal-tasks' }"
       :on-move="allowInsert"
       draggable=".task-card"
-      filter=".task-card__check, .task-card__agent-drag"
+      filter=".task-card__check"
       :prevent-on-filter="false"
-      :force-fallback="true"
-      :fallback-on-body="true"
-      :fallback-tolerance="4"
+      :force-fallback="false"
+      :set-data="setDragData"
       :animation="160"
       easing="cubic-bezier(0.2, 0.8, 0.2, 1)"
       ghost-class="task-card--ghost"

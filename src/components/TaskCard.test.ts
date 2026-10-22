@@ -30,24 +30,23 @@ const mockTask: Task = {
   updatedAt: "2026-10-21T00:00:00Z",
 };
 
-describe("TaskCard Agent drag", () => {
-  it("renders the Agent drag handle", () => {
+describe("TaskCard native drag", () => {
+  it("makes the whole card draggable natively without extra agent button", () => {
     const wrapper = mount(TaskCard, {
       props: { task: mockTask, selected: false },
     });
 
-    const dragHandle = wrapper.find(".task-card__agent-drag");
-    expect(dragHandle.exists()).toBe(true);
-    expect(dragHandle.attributes("draggable")).toBe("true");
-    expect(dragHandle.text()).toContain("Agent");
+    const card = wrapper.get(".task-card");
+    expect(card.attributes("draggable")).toBe("true");
+    expect(wrapper.find(".task-card__agent-drag").exists()).toBe(false);
   });
 
-  it("sets plain text prompt on native dragstart", async () => {
+  it("sets plain text prompt on card native dragstart", async () => {
     const wrapper = mount(TaskCard, {
       props: { task: mockTask, selected: false },
     });
 
-    const dragHandle = wrapper.get(".task-card__agent-drag");
+    const card = wrapper.get(".task-card");
     const setData = vi.fn();
     const dataTransfer = {
       setData,
@@ -57,7 +56,7 @@ describe("TaskCard Agent drag", () => {
     const dragEvent = new Event("dragstart", { bubbles: true, cancelable: true });
     Object.defineProperty(dragEvent, "dataTransfer", { value: dataTransfer });
 
-    await dragHandle.element.dispatchEvent(dragEvent);
+    await card.element.dispatchEvent(dragEvent);
 
     expect(setData).toHaveBeenCalledWith(
       "text/plain",
@@ -71,17 +70,22 @@ describe("TaskCard Agent drag", () => {
       "text/plain",
       expect.stringContaining("D:/workspace/medchat-edge"),
     );
-    expect(dataTransfer.effectAllowed).toBe("copy");
+    expect(setData).toHaveBeenCalledWith(
+      "application/x-kanboard-task-id",
+      "task-001",
+    );
+    expect(dataTransfer.effectAllowed).toBe("copyMove");
   });
 
-  it("does not trigger card selection when clicking the drag handle", async () => {
+  it("selects the card on click and preserves checkbox toggling", async () => {
     const wrapper = mount(TaskCard, {
       props: { task: mockTask, selected: false },
     });
 
-    const dragHandle = wrapper.get(".task-card__agent-drag");
-    await dragHandle.trigger("click");
+    await wrapper.get(".task-card").trigger("click");
+    expect(wrapper.emitted("select")).toEqual([["task-001"]]);
 
-    expect(wrapper.emitted("select")).toBeUndefined();
+    await wrapper.get(".task-card__check").trigger("click");
+    expect(wrapper.emitted("toggle")).toHaveLength(1);
   });
 });

@@ -32,7 +32,7 @@ describe("agentPrompt", () => {
     expect(prompt).toContain("所属项目: medchat-edge (D:/workspace/medchat-edge)");
     expect(prompt).toContain("优先级: 高");
     expect(prompt).toContain("检查清单进度: 1/1");
-    expect(prompt).toContain("请按 Kanboard SOP 执行该任务：前往本地项目路径开发，完成后流转至「待验证」并附上验证指南。");
+    expect(prompt).toContain("请按 Kanboard SOP 执行该任务：前往本地项目路径开发，完成后流转至「待验证」并提交验证方案");
   });
 
   it("formats task prompt without project or path gracefully", () => {
@@ -62,6 +62,5 @@ describe("agentPrompt", () => {
     expect(prompt).toContain("【看板任务】独立小任务");
     expect(prompt).toContain("task-456");
     expect(prompt).not.toContain("所属项目");
-    expect(prompt).toContain("请按 Kanboard SOP 执行该任务：前往本地项目路径开发，完成后流转至「待验证」并附上验证指南。");
   });
 });

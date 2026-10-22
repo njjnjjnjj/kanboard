@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "看板",
+        "dragDropEnabled": false,
         "width": 1280,
         "height": 780,
         "maximized": true,

@@ -54,6 +54,8 @@ const statusMessage = ref("");
 const draggingTask = ref(false);
 const trashActive = ref(false);
 const dragOrigin = ref<DragOrigin | null>(null);
+const dropReceivedInside = ref(false);
+const dragSnapshot = ref<TaskColumn[] | null>(null);
 const projectEditorOpen = ref(false);
 const editingProject = ref<Project | null>(null);
 
@@ -430,12 +432,38 @@ async function removeTask(taskId: string) {
 }
 
 /** Only real pointer coordinates decide whether a drag ended on the delete zone. */
-function trackTrashPointer(event: MouseEvent | TouchEvent) {
+function trackTrashPointer(event: MouseEvent | TouchEvent | DragEvent) {
   const over = isPointInDragTrash(dragPointFrom(event));
   trashActive.value = over;
   // While the pointer is on "delete" the card belongs to no column: keep it on the
   // slot it came from instead of the column the pointer last hovered.
   if (over) restoreDraggedCardToOrigin(dragOrigin.value);
+}
+
+function handleInternalDrop() {
+  dropReceivedInside.value = true;
+}
+
+function handleWindowDragStart() {
+  dropReceivedInside.value = false;
+}
+
+function handleWindowDragOver(event: DragEvent) {
+  // Always prevent default on dragover to permit drop and prevent the browser's 🚫 (no-drop) cursor!
+  event.preventDefault();
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = "move";
+  }
+  if (draggingTask.value) {
+    trackTrashPointer(event);
+  }
+}
+
+function handleWindowDragEnter(event: DragEvent) {
+  event.preventDefault();
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = "move";
+  }
 }
 
 function stopTrashTracking() {
@@ -452,33 +480,50 @@ function startTrashTracking() {
 
 function beginTaskDrag(columnId: string, origin: { taskId: string; index: number }) {
   dragOrigin.value = { columnId, taskId: origin.taskId, index: origin.index };
+  dragSnapshot.value = JSON.parse(JSON.stringify(columns.value));
+  dropReceivedInside.value = false;
   draggingTask.value = true;
   startTrashTracking();
 }
 
 async function handleTaskDrop(result: { taskId: string; intoTrash: boolean }) {
   const origin = dragOrigin.value;
+  const wasInternalDrop = dropReceivedInside.value;
+  const snapshot = dragSnapshot.value;
+  dragSnapshot.value = null;
   draggingTask.value = false;
   stopTrashTracking();
-  if (!result.intoTrash) {
-    const saved = await queueOrderSave();
-    const movedTask = findTask(result.taskId);
-    if (saved && origin?.columnId !== "done" && movedTask?.columnId === "done" && movedTask.recurrenceRule !== "none") {
-      await createRecurringSuccessor(movedTask);
-      await load();
-      announce("任务已完成，下一次任务已加入就绪");
-    }
-    nextTick(() => {
-      const exceeded = columns.value.find((column) =>
-        column.wipLimit !== null && column.tasks.length > column.wipLimit,
-      );
-      if (exceeded) announce(`${exceeded.title}已超过 WIP 上限，建议先完成一项`);
-    });
+
+  if (result.intoTrash) {
+    // Deleting is decided here and nowhere else, so a card released over the
+    // delete zone can never stay behind in the column beneath it.
+    if (result.taskId) await removeTask(result.taskId);
     return;
   }
-  // Deleting is decided here and nowhere else, so a card released over the
-  // delete zone can never stay behind in the column beneath it.
-  if (result.taskId) await removeTask(result.taskId);
+
+  // When drag ends outside without an internal drop (e.g. dragged out to Codex or cancelled),
+  // revert card to snapshot and do not save new order.
+  const isExternalDrop = origin !== null && !wasInternalDrop;
+  if (isExternalDrop) {
+    if (snapshot) {
+      columns.value = snapshot;
+    }
+    return;
+  }
+
+  const saved = await queueOrderSave();
+  const movedTask = findTask(result.taskId);
+  if (saved && origin?.columnId !== "done" && movedTask?.columnId === "done" && movedTask.recurrenceRule !== "none") {
+    await createRecurringSuccessor(movedTask);
+    await load();
+    announce("任务已完成，下一次任务已加入就绪");
+  }
+  nextTick(() => {
+    const exceeded = columns.value.find((column) =>
+      column.wipLimit !== null && column.tasks.length > column.wipLimit,
+    );
+    if (exceeded) announce(`${exceeded.title}已超过 WIP 上限，建议先完成一项`);
+  });
 }
 
 function selectRelativeTask(offset: number) {
@@ -609,6 +654,10 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 
 onMounted(async () => {
   window.addEventListener("keydown", handleGlobalKeydown);
+  window.addEventListener("dragstart", handleWindowDragStart, true);
+  window.addEventListener("dragenter", handleWindowDragEnter, true);
+  window.addEventListener("dragover", handleWindowDragOver, true);
+  window.addEventListener("drop", handleInternalDrop, true);
   unlistenTaskCreated = await listen<string | null>("task-created", handleTaskCreated);
   unlistenMcpTaskUpdated = await listen("mcp:task-updated", async () => {
     await load();
@@ -634,6 +683,10 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   stopTrashTracking();
   window.removeEventListener("keydown", handleGlobalKeydown);
+  window.removeEventListener("dragstart", handleWindowDragStart, true);
+  window.removeEventListener("dragenter", handleWindowDragEnter, true);
+  window.removeEventListener("dragover", handleWindowDragOver, true);
+  window.removeEventListener("drop", handleInternalDrop, true);
   unlistenTaskCreated?.();
   unlistenMcpTaskUpdated?.();
   unlistenMcpTaskBlocked?.();

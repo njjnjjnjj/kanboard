@@ -20,7 +20,7 @@ const mockTask: Task = {
   blockedSince: null,
   checklist: [],
   recurrenceRule: "none",
-  reviewNotes: "### 实现方案\n已完成相关逻辑改造\n\n### 交付情况\n全部功能点已实现\n\n### 验证与测试方式\n请执行测试",
+  reviewNotes: "### 1. 核心改动与实现方案\n\n| 模块 | 改动说明 |\n| :--- | :--- |\n| `TaskInspector.vue` | 增加表格渲染 |\n\n### 2. 交付成果\n\n- [x] 全部功能点已实现\n- [x] 新增 3 项测试\n\n### 3. 测试与验证指南\n\n```bash\nnpm test\n```",
   createdAt: "2026-10-21T00:00:00Z",
   updatedAt: "2026-10-21T00:00:00Z",
 };
@@ -33,7 +33,7 @@ const columns: TaskColumn[] = [
 ];
 
 describe("TaskInspector verification tab", () => {
-  it("renders 3 peer tabs and auto-selects verification tab when task is in verify status", () => {
+  it("renders 3 peer tabs with '验证方案' and auto-selects verification tab when task is in verify status", () => {
     const wrapper = mount(TaskInspector, {
       props: {
         task: mockTask,
@@ -48,13 +48,52 @@ describe("TaskInspector verification tab", () => {
     expect(tabs).toHaveLength(3);
     expect(tabs[0].text()).toContain("任务详情");
     expect(tabs[1].text()).toContain("完成条件");
-    expect(tabs[2].text()).toContain("待验证方案");
+    expect(tabs[2].text()).toContain("验证方案");
     expect(tabs[2].attributes("aria-selected")).toBe("true");
 
     const verificationPanel = wrapper.find("#task-verification-panel");
     expect(verificationPanel.isVisible()).toBe(true);
     expect(wrapper.find(".task-verification__toolbar").text()).toContain("当前任务等待人工核验");
     expect(wrapper.find(".secondary-button").text()).toBe("通过验证并完成");
+  });
+
+  it("renders markdown preview with tables and lists by default and allows switching to edit mode", async () => {
+    const wrapper = mount(TaskInspector, {
+      props: {
+        task: mockTask,
+        columns,
+        projects: [],
+        tags: [],
+        saving: false,
+      },
+    });
+
+    // Verification preview is rendered with markdown elements
+    const preview = wrapper.find(".verification-preview");
+    expect(preview.exists()).toBe(true);
+    expect(preview.html()).toContain("<h3>1. 核心改动与实现方案</h3>");
+    expect(preview.find("table").exists()).toBe(true);
+    expect(preview.find("th").text()).toBe("模块");
+    expect(preview.html()).toContain("增加表格渲染");
+    expect(preview.html()).toContain("全部功能点已实现");
+    expect(preview.html()).toContain("language-bash");
+    expect(preview.html()).toContain("npm test");
+    expect(wrapper.find("textarea[data-inspector-review-notes]").exists()).toBe(false);
+
+    // Switch to edit mode
+    const editToggle = wrapper.findAll(".view-toggle-btn")[1];
+    expect(editToggle.text()).toBe("编辑");
+    await editToggle.trigger("click");
+
+    const textarea = wrapper.find("textarea[data-inspector-review-notes]");
+    expect(textarea.exists()).toBe(true);
+    expect((textarea.element as HTMLTextAreaElement).value).toContain("### 1. 核心改动与实现方案");
+
+    // Switch back to preview
+    const previewToggle = wrapper.findAll(".view-toggle-btn")[0];
+    await previewToggle.trigger("click");
+    expect(wrapper.find(".verification-preview").exists()).toBe(true);
+    expect(wrapper.find("textarea[data-inspector-review-notes]").exists()).toBe(false);
   });
 
   it("passes verification and marks task as done upon clicking the button", async () => {
@@ -76,7 +115,7 @@ describe("TaskInspector verification tab", () => {
     expect(saveEvents?.[0]?.[0]).toBe("task-001");
     expect(saveEvents?.[0]?.[1]).toMatchObject({
       columnId: "done",
-      reviewNotes: expect.stringContaining("### 实现方案"),
+      reviewNotes: expect.stringContaining("### 1. 核心改动与实现方案"),
     });
   });
 
@@ -101,5 +140,11 @@ describe("TaskInspector verification tab", () => {
     expect(wrapper.find("#task-verification-panel").isVisible()).toBe(true);
     // Non-verify task does not show the pass verification toolbar
     expect(wrapper.find(".task-verification__toolbar").exists()).toBe(false);
+    // Empty review notes shows the empty guide state
+    expect(wrapper.find(".verification-empty").exists()).toBe(true);
+
+    // Clicking "编写验证方案" in empty state switches to edit mode
+    await wrapper.find(".verification-empty button").trigger("click");
+    expect(wrapper.find("textarea[data-inspector-review-notes]").exists()).toBe(true);
   });
 });

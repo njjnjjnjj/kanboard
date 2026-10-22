@@ -403,11 +403,11 @@ struct UpdateTaskStatusInput {
 struct SubmitTaskVerificationInput {
     /// 任务唯一 ID。
     task_id: String,
-    /// 简要实现方案（涉及改动的模块、逻辑与实现方案，使用纯中文撰写，禁止包含 emoji）。
+    /// 核心实现方案。严禁单行推到底！可读性优先：多模块/文件改动时必须优先使用 Markdown 表格 `| 模块/文件 | 改动类型 | 核心逻辑说明 |` 或多层级列表清晰分步呈现，中英文及数字间加空格，严禁包含 emoji。
     implementation: String,
-    /// 交付情况与达成成果（功能点、关键产物及清单达成情况，使用纯中文撰写，禁止包含 emoji）。
+    /// 交付情况与达成成果。严禁单行长句！必须使用 Markdown 复选清单 `- [x]` 或表格分项逐条罗列功能点、关键产物及 Checklist 完成情况，中英文及数字间加空格，严禁包含 emoji。
     summary: String,
-    /// 验证与测试方式（测试命令、测试用例、界面操作路径或验收标准，使用纯中文撰写，禁止包含 emoji）。
+    /// 验证与测试方式。严禁无分段堆叠！必须优先使用表格 `| 验证项 | 测试命令 / 操作路径 | 预期效果 |` 或带语言标签的代码块清晰列出验收方式，中英文及数字间加空格，严禁包含 emoji。
     test_guide: String,
 }
 
@@ -831,7 +831,7 @@ impl KanboardMcp {
         structured(json!({ "task": updated_task }))
     }
 
-    #[tool(description = "提交任务待验证方案并移入待验证列（verify）。Agent 必须使用纯中文提供实现方案、交付情况及测试验证说明，严禁使用 emoji，严禁自行直接标记为完成（done）。")]
+    #[tool(description = "提交任务验证方案并移入待验证列（verify）。Agent 必须使用纯中文提供实现方案、交付情况及测试验证说明，文案排版须严格遵循中文文案排版指北（中英文及数字间规范空格），段落内支持标准 Markdown 语法，严禁使用 emoji，严禁自行直接标记为完成（done）。")]
     async fn submit_task_verification(
         &self,
         Parameters(input): Parameters<SubmitTaskVerificationInput>,
@@ -845,7 +845,7 @@ impl KanboardMcp {
         };
 
         let formatted_notes = format!(
-            "### 实现方案\n{}\n\n### 交付情况\n{}\n\n### 验证与测试方式\n{}",
+            "### 1. 实现方案\n\n{}\n\n### 2. 交付成果\n\n{}\n\n### 3. 验证与测试指南\n\n{}",
             input.implementation.trim(),
             input.summary.trim(),
             input.test_guide.trim(),
@@ -1422,16 +1422,16 @@ mod tests {
                 CallToolRequestParams::new("submit_task_verification")
                     .with_arguments(serde_json::from_value(json!({
                         "task_id": "task-test-1",
-                        "implementation": "修改了 mcp.rs 后端工具与 TaskInspector.vue 前端",
-                        "summary": "全部单元测试通过，支持结构化存储交付与验证方案",
-                        "test_guide": "运行 cargo test 与 npm test，并在看板待验证列检查"
+                        "implementation": "| 模块 | 改动类型 | 核心逻辑说明 |\n| :--- | :--- | :--- |\n| `mcp.rs` | 接口规范 | 支持结构化表格入参 |\n| `TaskInspector.vue` | 前端组件 | 渲染 Markdown 表格与视图切换 |",
+                        "summary": "- [x] 全部 68 项前端单测通过\n- [x] 全部 2 项后端单测通过",
+                        "test_guide": "| 验证项 | 测试命令 / 操作路径 | 预期效果 |\n| :--- | :--- | :--- |\n| 前端单测 | `npm test` | 68 passed |\n| 后端测试 | `cargo test` | 2 passed |"
                     })).unwrap())
             )
             .await
             .unwrap();
         let verify_content = verify_res.structured_content.unwrap();
         assert_eq!(verify_content["task"]["columnId"], "verify");
-        assert!(verify_content["task"]["reviewNotes"].as_str().unwrap().contains("### 实现方案"));
+        assert!(verify_content["task"]["reviewNotes"].as_str().unwrap().contains("| 模块 | 改动类型 | 核心逻辑说明 |"));
         assert_eq!(verify_content["verifiedPending"], true);
 
         client.cancel().await.unwrap();

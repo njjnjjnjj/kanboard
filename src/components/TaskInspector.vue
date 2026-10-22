@@ -1,10 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from "vue";
-import type { BlockedReason, Project, Tag, Task, TaskChanges, TaskColumn } from "../types";
+import { marked } from "marked";
 import DateInput from "./DateInput.vue";
 import TagInput from "./TagInput.vue";
 import TaskChecklist from "./TaskChecklist.vue";
 import TaskSelect from "./TaskSelect.vue";
+import type { BlockedReason, Project, Tag, Task, TaskChanges, TaskColumn } from "../types";
+
+marked.use({
+  breaks: true,
+  gfm: true,
+});
 
 const props = defineProps<{
   task: Task;
@@ -25,6 +31,8 @@ type TabType = typeof TABS[number];
 
 const confirmingDelete = ref(false);
 const activeTab = ref<TabType>("details");
+const isEditingVerification = ref(false);
+
 const statusOptions = computed(() =>
   props.columns.map((column) => ({ value: column.id, label: column.title })),
 );
@@ -67,12 +75,23 @@ const draft = reactive<TaskChanges>({
   reviewNotes: "",
 });
 
+const renderedVerificationNotes = computed(() => {
+  if (!draft.reviewNotes?.trim()) return "";
+  try {
+    return marked.parse(draft.reviewNotes) as string;
+  } catch (err) {
+    console.error("Failed to parse markdown", err);
+    return draft.reviewNotes;
+  }
+});
+
 watch(
   () => props.task,
   (task, previousTask) => {
     confirmingDelete.value = false;
     if (!previousTask || task.id !== previousTask.id) {
       activeTab.value = task.columnId === "verify" ? "verification" : "details";
+      isEditingVerification.value = false;
     }
     draft.title = task.title;
     draft.description = task.description;
@@ -189,7 +208,7 @@ async function handleTabKeydown(event: KeyboardEvent) {
           :tabindex="activeTab === 'verification' ? 0 : -1"
           @click="activeTab = 'verification'"
         >
-          待验证方案 <span v-if="draft.columnId === 'verify'">待验证</span>
+          验证方案 <span v-if="draft.columnId === 'verify'">待验证</span>
         </button>
       </div>
 
@@ -279,15 +298,70 @@ async function handleTabKeydown(event: KeyboardEvent) {
           </button>
         </div>
 
-        <label class="field field--verification-notes">
-          <span>验证与交付说明</span>
+        <div class="field field--verification-notes">
+          <div class="field-header">
+            <span>验证方案说明</span>
+            <div class="verification-view-toggle">
+              <button
+                type="button"
+                class="view-toggle-btn"
+                :class="{ 'view-toggle-btn--active': !isEditingVerification }"
+                :disabled="!draft.reviewNotes.trim()"
+                @click="isEditingVerification = false"
+              >
+                预览
+              </button>
+              <button
+                type="button"
+                class="view-toggle-btn"
+                :class="{ 'view-toggle-btn--active': isEditingVerification }"
+                @click="isEditingVerification = true"
+              >
+                编辑
+              </button>
+            </div>
+          </div>
+
+          <div
+            v-if="!isEditingVerification && draft.reviewNotes.trim()"
+            class="verification-preview markdown-body"
+            data-inspector-review-preview
+            v-html="renderedVerificationNotes"
+          />
+          <div
+            v-else-if="!isEditingVerification && !draft.reviewNotes.trim()"
+            class="verification-empty"
+          >
+            <p>暂无验证方案。Agent 在提交提测时将在此生成结构化 Markdown 交付文档，你也可以点击“编辑”手动编写。</p>
+            <button
+              type="button"
+              class="secondary-button"
+              @click="isEditingVerification = true"
+            >
+              编写验证方案
+            </button>
+          </div>
           <textarea
+            v-else
             data-inspector-review-notes
             v-model="draft.reviewNotes"
-            rows="12"
-            placeholder="记录实现方案、完成情况及测试用例或复核步骤"
+            rows="16"
+            placeholder="请使用结构化 Markdown 编写验证方案（优先使用表格、清单与代码块分项呈现，避免单行堆砌）：
+
+### 1. 核心改动与实现方案
+| 模块 / 文件 | 改动说明 |
+| :--- | :--- |
+| `src/...` | 描述... |
+
+### 2. 交付成果
+- [x] 完成项 1...
+
+### 3. 测试与验证指南
+| 验证项 | 测试命令 / 操作步骤 | 预期效果 |
+| :--- | :--- | :--- |
+| 自动化单测 | `npm test` | 通过全部测试 |"
           />
-        </label>
+        </div>
       </section>
 
       <footer class="task-inspector__actions">
