@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "../types";
-import { buildAgentTaskPrompt } from "./agentPrompt";
+import { buildAgentTaskPrompt, buildCustomSopPrompt } from "./agentPrompt";
 
 describe("agentPrompt", () => {
   it("formats concise task prompt with project and path", () => {
@@ -62,5 +62,45 @@ describe("agentPrompt", () => {
     expect(prompt).toContain("【看板任务】独立小任务");
     expect(prompt).toContain("task-456");
     expect(prompt).not.toContain("所属项目");
+  });
+
+  it("supports custom sop summary when passed", () => {
+    const task: Task = {
+      id: "task-789",
+      columnId: "doing",
+      projectId: null,
+      project: null,
+      tags: [],
+      title: "重构网络层",
+      description: "",
+      dueDate: null,
+      priority: "none",
+      position: 3000,
+      completedAt: null,
+      startedAt: null,
+      blockedReason: null,
+      blockedSince: null,
+      checklist: [],
+      recurrenceRule: "none",
+      reviewNotes: "",
+      createdAt: "2026-10-21T00:00:00Z",
+      updatedAt: "2026-10-21T00:00:00Z",
+    };
+
+    const customSummary = "执行团队敏捷 SOP：遵循 TDD 规范，所有改动均须提供单测证明。";
+    const prompt = buildAgentTaskPrompt(task, customSummary);
+    expect(prompt).toContain("【看板任务】重构网络层");
+    expect(prompt).toContain(customSummary);
+    expect(prompt).not.toContain("请按 Kanboard SOP 执行该任务");
+  });
+
+  it("builds custom SOP collaboration prompt with intention format", () => {
+    const prompt = buildCustomSopPrompt("这是当前团队概述");
+    expect(prompt).toContain("【自定义 SOP】");
+    expect(prompt).toContain("这是当前团队概述");
+    expect(prompt).toContain("需求访谈");
+    expect(prompt).toContain("拟定双轨方案");
+    expect(prompt).toContain("set_custom_sop");
+    expect(prompt).toContain("reset_custom_sop");
   });
 });

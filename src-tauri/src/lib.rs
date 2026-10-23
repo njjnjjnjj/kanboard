@@ -182,6 +182,9 @@ pub fn run() {
             mcp::set_mcp_enabled,
             mcp::connect_codex,
             mcp::connect_antigravity,
+            mcp::get_custom_sop,
+            mcp::set_custom_sop,
+            mcp::reset_custom_sop,
             get_pending_open_task,
         ])
         .run(tauri::generate_context!())

@@ -7,11 +7,12 @@ const save = vi.hoisted(() => vi.fn());
 const enable = vi.hoisted(() => vi.fn());
 const disable = vi.hoisted(() => vi.fn());
 const isEnabled = vi.hoisted(() => vi.fn());
+const confirmMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/plugin-autostart", () => ({ disable, enable, isEnabled }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({
-  confirm: vi.fn(),
+  confirm: confirmMock,
   open: vi.fn(),
   save,
 }));
@@ -24,6 +25,15 @@ describe("SettingsPanel", () => {
         return Promise.resolve({ path: "C:\\data\\kanboard.db", directory: "C:\\data", version: "0.1.0" });
       }
       if (command === "get_mcp_status") return Promise.resolve({ enabled: false, running: false, url: "http://127.0.0.1:47831/mcp", lastError: null });
+      if (command === "get_custom_sop") {
+        return Promise.resolve({
+          id: "current",
+          summary: "默认 SOP 概述文本",
+          content: "### 默认 SOP 规范完整内容",
+          isCustom: false,
+          updatedAt: "2026-10-23T00:00:00Z",
+        });
+      }
       return Promise.resolve(undefined);
     });
     isEnabled.mockResolvedValue(false);
@@ -70,7 +80,7 @@ describe("SettingsPanel", () => {
     expect(invoke).toHaveBeenCalledWith("get_storage_info");
   });
 
-  it("exports a backup to the selected file", async () => {
+  it("exports a backup and notifies globally", async () => {
     save.mockResolvedValue("C:\\backup\\tasks.db");
     const wrapper = mount(SettingsPanel, { props: { open: true } });
     await flushPromises();
@@ -79,7 +89,10 @@ describe("SettingsPanel", () => {
     await flushPromises();
 
     expect(invoke).toHaveBeenCalledWith("export_data", { path: "C:\\backup\\tasks.db" });
-    expect(wrapper.text()).toContain("已导出到 C:\\backup\\tasks.db");
+    expect(wrapper.emitted("announce")).toBeTruthy();
+    expect(wrapper.emitted("announce")?.[0]?.[0]).toContain("已导出到 C:\\backup\\tasks.db");
+    // Ensure no message inside panel body
+    expect(wrapper.find(".settings-panel__message").exists()).toBe(false);
   });
 
   it("enables the local MCP service from AI integration settings", async () => {
@@ -87,6 +100,15 @@ describe("SettingsPanel", () => {
       if (command === "get_storage_info") return Promise.resolve({ path: "C:\\data\\kanboard.db", directory: "C:\\data", version: "0.1.0" });
       if (command === "get_mcp_status") return Promise.resolve({ enabled: false, running: false, url: "http://127.0.0.1:47831/mcp", lastError: null });
       if (command === "set_mcp_enabled") return Promise.resolve({ enabled: true, running: true, url: "http://127.0.0.1:47831/mcp", lastError: null });
+      if (command === "get_custom_sop") {
+        return Promise.resolve({
+          id: "current",
+          summary: "默认 SOP 概述文本",
+          content: "### 默认 SOP 规范完整内容",
+          isCustom: false,
+          updatedAt: "2026-10-23T00:00:00Z",
+        });
+      }
       return Promise.resolve(undefined);
     });
     const wrapper = mount(SettingsPanel, { props: { open: true } });
@@ -100,37 +122,76 @@ describe("SettingsPanel", () => {
     expect(wrapper.text()).toContain("MCP 服务运行中");
   });
 
-  it("prepares the plugin and opens Codex", async () => {
-    invoke.mockImplementation((command: string) => {
-      if (command === "get_storage_info") return Promise.resolve({ path: "C:\\data\\kanboard.db", directory: "C:\\data", version: "0.1.0" });
-      if (command === "get_mcp_status") return Promise.resolve({ enabled: true, running: true, url: "http://127.0.0.1:47831/mcp", lastError: null });
-      if (command === "connect_codex") return Promise.resolve({ opened: true, marketplacePath: "C:\\data\\marketplace.json", deepLink: "codex://plugins/kanboard-agent" });
-      return Promise.resolve(undefined);
-    });
+  it("renders SOP section with default version and opens readonly viewer with full content", async () => {
     const wrapper = mount(SettingsPanel, { props: { open: true } });
     await flushPromises();
 
-    await wrapper.findAll("button").find((button) => button.text() === "连接到 Codex")!.trigger("click");
+    expect(wrapper.text()).toContain("任务执行 SOP（标准作业流程）");
+    expect(wrapper.text()).toContain("系统默认");
+    expect(wrapper.text()).toContain("默认 SOP 概述文本");
+
+    const viewButton = wrapper.findAll("button").find((btn) => btn.text() === "查看完整 SOP");
+    expect(viewButton).toBeDefined();
+    await viewButton!.trigger("click");
     await flushPromises();
 
-    expect(invoke).toHaveBeenCalledWith("connect_codex");
-    expect(wrapper.text()).toContain("已打开 Codex");
+    // Check modal
+    const modal = document.querySelector(".markdown-fullscreen-modal");
+    expect(modal).not.toBeNull();
+    expect(modal?.textContent).toContain("标准作业流程 (SOP) · 全屏只读");
+    expect(modal?.textContent).toContain("只读模式");
+    expect(modal?.textContent).toContain("17 字符");
+
+    // Close viewer via escape or close button
+    const escBtn = modal?.querySelector(".info-esc-btn") as HTMLButtonElement | null;
+    expect(escBtn).not.toBeNull();
+    escBtn?.click();
+    await flushPromises();
+    expect(document.querySelector(".markdown-fullscreen-modal")).toBeNull();
   });
 
-  it("configures Antigravity connection", async () => {
+  it("handles custom SOP reset to default and notifies globally", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "get_storage_info") return Promise.resolve({ path: "C:\\data\\kanboard.db", directory: "C:\\data", version: "0.1.0" });
       if (command === "get_mcp_status") return Promise.resolve({ enabled: true, running: true, url: "http://127.0.0.1:47831/mcp", lastError: null });
-      if (command === "connect_antigravity") return Promise.resolve({ configPath: "C:\\Users\\user\\.gemini\\config\\mcp_config.json", configured: true });
+      if (command === "get_custom_sop") {
+        return Promise.resolve({
+          id: "current",
+          summary: "敏捷 TDD 自定义概述",
+          content: "### 团队定制 SOP 文档",
+          isCustom: true,
+          updatedAt: "2026-10-23T00:00:00Z",
+        });
+      }
+      if (command === "reset_custom_sop") {
+        return Promise.resolve({
+          id: "current",
+          summary: "默认 SOP 概述文本",
+          content: "### 默认 SOP 规范完整内容",
+          isCustom: false,
+          updatedAt: "2026-10-23T00:00:00Z",
+        });
+      }
       return Promise.resolve(undefined);
     });
+    confirmMock.mockResolvedValue(true);
+
     const wrapper = mount(SettingsPanel, { props: { open: true } });
     await flushPromises();
 
-    await wrapper.findAll("button").find((button) => button.text() === "连接到 Antigravity")!.trigger("click");
+    expect(wrapper.text()).toContain("自定义版本");
+    expect(wrapper.text()).toContain("敏捷 TDD 自定义概述");
+
+    const resetBtn = wrapper.findAll("button").find((btn) => btn.text() === "重置为默认");
+    expect(resetBtn).toBeDefined();
+    await resetBtn!.trigger("click");
     await flushPromises();
 
-    expect(invoke).toHaveBeenCalledWith("connect_antigravity");
-    expect(wrapper.text()).toContain("已成功配置 Antigravity！");
+    expect(confirmMock).toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledWith("reset_custom_sop");
+    expect(wrapper.emitted("announce")).toBeTruthy();
+    expect(wrapper.emitted("announce")?.[0]?.[0]).toContain("SOP 已成功重置为系统默认规范。");
+    // Ensure no message inside panel body
+    expect(wrapper.find(".settings-panel__message").exists()).toBe(false);
   });
 });

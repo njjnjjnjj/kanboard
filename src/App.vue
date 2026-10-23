@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type Event, type UnlistenFn } from "@tauri-apps/api/event";
 import { onAction } from "@tauri-apps/plugin-notification";
@@ -30,6 +30,7 @@ import { restoreDraggedCardToOrigin, type DragOrigin } from "./drag/dragPlacehol
 import { dragPointFrom, isPointInDragTrash } from "./drag/trashDropZone";
 import { startFirstOnboarding, startOnboarding } from "./onboarding";
 import { calculateFlowMetrics } from "./flowMetrics";
+import { loadSopConfig, initSopListener } from "./data/sopRepository";
 import type { DeletedTask, FlowMetrics, Project, ProjectChanges, Tag, Task, TaskChanges, TaskColumn, TaskEvent, TaskScope } from "./types";
 
 const columns = ref<TaskColumn[]>([]);
@@ -154,6 +155,7 @@ function announce(message: string) {
     statusMessage.value = "";
   }, 2200);
 }
+provide("announce", announce);
 
 let loadPromise: Promise<void> | null = null;
 async function load() {
@@ -693,6 +695,8 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 }
 
 onMounted(async () => {
+  loadSopConfig();
+  initSopListener();
   window.addEventListener("keydown", handleGlobalKeydown);
   window.addEventListener("dragstart", handleWindowDragStart, true);
   window.addEventListener("dragenter", handleWindowDragEnter, true);
@@ -958,7 +962,7 @@ onBeforeUnmount(() => {
     />
 
     <FlowDashboard :open="dashboardOpen" :metrics="metrics" @close="dashboardOpen = false" />
-    <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" />
+    <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" @announce="announce" />
 
     <div class="sr-status" role="status" aria-live="polite">{{ statusMessage }}</div>
     <Transition name="toast">

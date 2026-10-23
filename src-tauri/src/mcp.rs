@@ -80,7 +80,104 @@ pub struct AntigravityConnection {
     pub configured: bool,
 }
 
+pub const DEFAULT_SOP_SUMMARY: &str = "请按 Kanboard SOP 执行该任务：前往本地项目路径开发，完成后流转至「待验证」并提交验证方案（可读性优先：必要时使用表格、清单与代码块分项排版，避免单行堆砌，严格遵守中文文案排版指北，严禁使用 emoji）。";
+
+pub const DEFAULT_SOP_CONTENT: &str = r#"### 任务接单与自主执行 SOP（标准作业流程）
+
+当用户在对话中给出【看板任务】、拖入任务或指定任务 ID（如 UUID）要求处理/执行时，必须严格按照如下流程自主推进：
+
+1. **查阅任务详情与上下文**：
+   - 调用 `get_task(task_id)` 查询任务需求描述、检查清单（Checklist）及所属项目的本地工作区绝对路径（`task.project.path`）。
+2. **移入进行中**：
+   - 调用 `update_task_status(task_id, status="doing")` 将任务标记为进行中（系统将自动记录开始时间）。
+3. **定位本地仓库开发**：
+   - 切换或聚焦至项目本地路径（`project.path`）进行代码编写、修改与本地调试。若未配置路径，可主动询问用户或调用 `set_project_path`。
+4. **实时追踪检查清单**：
+   - 逐步完成任务子项时，调用 `update_checklist_item(task_id, item_id, completed=true)` 实时打钩，保持看板状态与实际研发进度同步。
+5. **异常与阻塞上报（不可抗力或疑问）**：
+   - 若遇到单测未过、环境缺失、第三方依赖受阻、物料短缺或需要人工决策的卡点，**严禁自行猜测或强行推进**。
+   - 必须调用 `set_task_blocked(task_id, reason="...", detail="...")`，详细阐明卡点背景，桌面端将立即收到通知并弹窗告警，等待用户协助。
+6. **提测流转（重要：禁止直接标为 `done`）**：
+   - **Agent 严禁自行将任务变更为 `done`**，最终完成状态必须由人类用户验收确认。
+   - 当所有工作完成并通过本地测试后，**调用专用提测工具**：
+     `submit_task_verification(task_id, implementation="...", summary="...", test_guide="...")`
+     该工具将自动将任务移至「**待验证**（`verify`）」列，并将结构化交付文档记录于独立的「**验证方案**」选项卡中供人工审核。
+   - **排版与格式规范要求（可读性优先，严格遵守）**：
+     - **严禁单行推到底**：严禁将核心改动、交付成果或测试步骤写成无分段、无排版的单行长文本！必须结构化分项呈现，可读性放在第一位。
+     - **必要时必须使用 Markdown 表格（Table）**：
+       - 涉及多个模块、文件或逻辑改动时，**必须优先使用表格**清晰对比展现（例如 `| 模块 / 文件 | 改动类型 | 核心逻辑说明 |`）；
+       - 涉及多项测试命令或验收条件时，**必须优先使用表格**结构化罗列（例如 `| 验证项 | 测试命令 / 操作路径 | 预期效果 |`）。
+     - **善用 Markdown 代码块与复选清单**：
+       - 执行命令必须放入带有语言标签的代码块（如 ```bash ... ```）；
+       - 交付项与 Checklist 达成情况必须使用复选清单 `- [x]` 分项列出。
+     - **遵循《中文文案排版指北》规范**：严格遵循 mzlogin/chinese-copywriting-guidelines：
+       - 中文与英文之间必须增加空格（例如 `使用 MCP 服务` 而非 `使用MCP服务`）；
+       - 中文与数字之间必须增加空格（例如 `新增 3 个测试用例` 而非 `新增3个测试用例`）；
+       - 数字与单位之间增加空格（例如 `耗时 120 ms`，度数与百分比除外如 `100%`）；
+       - 中文语句使用全角标点符号（，。！？：；“”‘’《》（）），代码、英文短语及文件路径使用半角；
+       - 英文专有名词保持标准大小写（例如 `Markdown`、`Git`、`MCP`、`API`、`UI`）。
+     - **严禁包含任何 emoji**：不得包含任何 emoji 表情符号或装饰图标，保持中性纯文本专业质感。
+
+#### 验证方案标准参考模版
+
+调用 `submit_task_verification` 时各入参推荐格式如下：
+
+- **`implementation` 示例**：
+  ```markdown
+  | 模块 / 文件 | 改动类型 | 核心逻辑说明 |
+  | :--- | :--- | :--- |
+  | `src/components/TaskInspector.vue` | UI 重构 | 增加 Markdown 渲染视图，支持预览与源码编辑模式无缝切换 |
+  | `src-tauri/src/mcp.rs` | 接口规范 | 更新提测工具入参描述，强化表格化多维交付与排版指北约束 |
+  | `src/styles.css` | 样式优化 | 为表格、代码块及列表增加中性质感边框与适宜行高 |
+  ```
+
+- **`summary` 示例**：
+  ```markdown
+  - [x] **Markdown 表格与视图渲染**：完成前端界面支持，提升复杂文档可读性。
+  - [x] **中文文案排版指北**：严格检查并规范中英文与数字间空格，彻底杜绝单行推底。
+  - [x] **测试覆盖**：新增 2 项验证测试，覆盖表格与渲染切换，全量测试 100% 通过。
+  ```
+
+- **`test_guide` 示例**：
+  ```markdown
+  | 验证项 | 测试命令 / 操作路径 | 预期结果 |
+  | :--- | :--- | :--- |
+  | 前端单元测试 | `npm test` | 全部单测通过 |
+  | 后端单元测试 | `cargo test --manifest-path src-tauri/Cargo.toml` | 全部单测通过 |
+  | 界面交互验收 | 在看板中打开待验证任务检查器，查看「验证方案」Tab | Markdown 表格与内容优雅排版，可正常切换编辑与预览 |
+  ```"#;
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SopConfig {
+    pub id: String,
+    pub summary: String,
+    pub content: String,
+    pub is_custom: bool,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SetCustomSopInput {
+    /// SOP 概述内容（用于任务下发时注入 Prompt 引导 Agent）
+    summary: String,
+    /// 完整 SOP Markdown 规范文档内容
+    content: String,
+}
+
 impl McpState {
+    async fn pool(&self) -> Result<SqlitePool, String> {
+        let path = self
+            .database_path
+            .lock()
+            .map_err(error)?
+            .clone();
+        let options = SqliteConnectOptions::new()
+            .filename(path)
+            .busy_timeout(std::time::Duration::from_secs(5));
+        SqlitePool::connect_with(options).await.map_err(error)
+    }
+
     async fn status(&self) -> McpStatus {
         let controller = self.controller.lock().await;
         McpStatus {
@@ -325,6 +422,47 @@ pub async fn connect_antigravity(
         config_path: mcp_config_path.to_string_lossy().into_owned(),
         configured: true,
     })
+}
+
+#[tauri::command]
+pub async fn get_custom_sop(state: tauri::State<'_, McpState>) -> Result<SopConfig, String> {
+    let pool = state.pool().await?;
+    let sop = load_current_sop(&pool).await.map_err(error)?;
+    pool.close().await;
+    Ok(sop)
+}
+
+#[tauri::command]
+pub async fn set_custom_sop(
+    summary: String,
+    content: String,
+    state: tauri::State<'_, McpState>,
+) -> Result<SopConfig, String> {
+    if summary.trim().is_empty() || content.trim().is_empty() {
+        return Err("SOP 概述和完整文档均不能为空".into());
+    }
+    let pool = state.pool().await?;
+    let sop = save_sop(&pool, summary.trim(), content.trim(), true)
+        .await
+        .map_err(error)?;
+    pool.close().await;
+    if let Some(app) = &state.app {
+        let _ = app.emit("sop-updated", ());
+    }
+    Ok(sop)
+}
+
+#[tauri::command]
+pub async fn reset_custom_sop(state: tauri::State<'_, McpState>) -> Result<SopConfig, String> {
+    let pool = state.pool().await?;
+    let sop = save_sop(&pool, DEFAULT_SOP_SUMMARY, DEFAULT_SOP_CONTENT, false)
+        .await
+        .map_err(error)?;
+    pool.close().await;
+    if let Some(app) = &state.app {
+        let _ = app.emit("sop-updated", ());
+    }
+    Ok(sop)
 }
 
 fn error(value: impl std::fmt::Display) -> String {
@@ -1197,6 +1335,97 @@ impl KanboardMcp {
         self.emit_task_updated();
         structured(json!({ "project": updated_project }))
     }
+
+    fn emit_sop_updated(&self) {
+        if let Some(app) = &self.app {
+            let _ = app.emit("sop-updated", ());
+        }
+    }
+
+    #[tool(description = "获取当前 Kanboard 生效的 SOP（标准作业流程），包含概述 summary 与完整 Markdown 规范 content。")]
+    async fn get_custom_sop(&self) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let sop = load_current_sop(&pool).await.map_err(mcp_error)?;
+        pool.close().await;
+        structured(json!({ "sop": sop }))
+    }
+
+    #[tool(description = "写入或更新 Kanboard 自定义 SOP（标准作业流程）。注意：Agent 严禁在未经用户明确确认前调用此工具！必须在用户对定制的 SOP 概述（summary）和完整规范（content）明确答复确认后，方可写入系统生效。")]
+    async fn set_custom_sop(
+        &self,
+        Parameters(input): Parameters<SetCustomSopInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        if input.summary.trim().is_empty() || input.content.trim().is_empty() {
+            return Err(rmcp::ErrorData::invalid_params("SOP 概述和完整内容均不能为空", None));
+        }
+        let pool = self.pool().await?;
+        let sop = save_sop(&pool, input.summary.trim(), input.content.trim(), true)
+            .await
+            .map_err(mcp_error)?;
+        pool.close().await;
+        self.emit_sop_updated();
+        structured(json!({ "sop": sop }))
+    }
+
+    #[tool(description = "重置 Kanboard SOP 为系统默认预置标准作业流程。")]
+    async fn reset_custom_sop(&self) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let sop = save_sop(&pool, DEFAULT_SOP_SUMMARY, DEFAULT_SOP_CONTENT, false)
+            .await
+            .map_err(mcp_error)?;
+        pool.close().await;
+        self.emit_sop_updated();
+        structured(json!({ "sop": sop }))
+    }
+}
+
+async fn load_current_sop(pool: &SqlitePool) -> Result<SopConfig, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT id, summary, content, is_custom, updated_at FROM sop_configs WHERE id = 'current'",
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    if let Some(r) = row {
+        Ok(SopConfig {
+            id: r.get("id"),
+            summary: r.get("summary"),
+            content: r.get("content"),
+            is_custom: r.get::<i64, _>("is_custom") != 0,
+            updated_at: r.get("updated_at"),
+        })
+    } else {
+        Ok(SopConfig {
+            id: "current".into(),
+            summary: DEFAULT_SOP_SUMMARY.into(),
+            content: DEFAULT_SOP_CONTENT.into(),
+            is_custom: false,
+            updated_at: Utc::now().to_rfc3339(),
+        })
+    }
+}
+
+async fn save_sop(
+    pool: &SqlitePool,
+    summary: &str,
+    content: &str,
+    is_custom: bool,
+) -> Result<SopConfig, sqlx::Error> {
+    let now = Utc::now().to_rfc3339();
+    let custom_int: i64 = if is_custom { 1 } else { 0 };
+    sqlx::query(
+        "INSERT INTO sop_configs (id, summary, content, is_custom, updated_at)
+         VALUES ('current', ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET summary = excluded.summary, content = excluded.content, is_custom = excluded.is_custom, updated_at = excluded.updated_at",
+    )
+    .bind(summary)
+    .bind(content)
+    .bind(custom_int)
+    .bind(&now)
+    .execute(pool)
+    .await?;
+
+    load_current_sop(pool).await
 }
 
 fn structured(value: Value) -> Result<CallToolResult, rmcp::ErrorData> {
@@ -1560,6 +1789,39 @@ mod tests {
         assert!(names.contains("append_task_notes"));
         assert!(names.contains("set_project_path"));
         assert!(names.contains("submit_task_verification"));
+        assert!(names.contains("get_custom_sop"));
+        assert!(names.contains("set_custom_sop"));
+        assert!(names.contains("reset_custom_sop"));
+
+        let initial_sop_res = client
+            .call_tool(CallToolRequestParams::new("get_custom_sop"))
+            .await
+            .unwrap();
+        let initial_sop = initial_sop_res.structured_content.unwrap();
+        assert_eq!(initial_sop["sop"]["isCustom"], false);
+        assert!(initial_sop["sop"]["summary"].as_str().unwrap().contains("请按 Kanboard SOP 执行该任务"));
+
+        let set_sop_res = client
+            .call_tool(
+                CallToolRequestParams::new("set_custom_sop")
+                    .with_arguments(serde_json::from_value(json!({
+                        "summary": "自定义 SOP 概述：严格 TDD 驱动并经过架构评审。",
+                        "content": "### 自定义团队 SOP 文档\n\n1. 编写红绿单测\n2. 提交评审"
+                    })).unwrap())
+            )
+            .await
+            .unwrap();
+        let set_sop = set_sop_res.structured_content.unwrap();
+        assert_eq!(set_sop["sop"]["isCustom"], true);
+        assert_eq!(set_sop["sop"]["summary"], "自定义 SOP 概述：严格 TDD 驱动并经过架构评审。");
+
+        let reset_sop_res = client
+            .call_tool(CallToolRequestParams::new("reset_custom_sop"))
+            .await
+            .unwrap();
+        let reset_sop = reset_sop_res.structured_content.unwrap();
+        assert_eq!(reset_sop["sop"]["isCustom"], false);
+        assert!(reset_sop["sop"]["summary"].as_str().unwrap().contains("请按 Kanboard SOP 执行该任务"));
 
         let result = client
             .call_tool(CallToolRequestParams::new("get_dashboard_summary"))

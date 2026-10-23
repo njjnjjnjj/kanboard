@@ -1,11 +1,26 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, inject, onBeforeUnmount, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { confirm, open as openDialog, save } from "@tauri-apps/plugin-dialog";
+import MarkdownEditor from "./MarkdownEditor.vue";
+import { currentSop, loadSopConfig, resetSopConfig } from "../data/sopRepository";
+import { buildCustomSopPrompt } from "../drag/agentPrompt";
 
 const props = defineProps<{ open: boolean }>();
-const emit = defineEmits<{ close: [] }>();
+const emit = defineEmits<{
+  close: [];
+  announce: [message: string];
+}>();
+
+const injectedAnnounce = inject<((msg: string) => void) | undefined>("announce", undefined);
+
+function notify(msg: string) {
+  if (injectedAnnounce) {
+    injectedAnnounce(msg);
+  }
+  emit("announce", msg);
+}
 
 interface StorageInfo {
   path: string;
@@ -24,25 +39,53 @@ const info = ref<StorageInfo | null>(null);
 const busy = ref(false);
 const autostartEnabled = ref(false);
 const autostartLoading = ref(false);
-const message = ref("");
 const mcpStatus = ref<McpStatus | null>(null);
 const mcpLoading = ref(false);
 const codexLoading = ref(false);
 const antigravityLoading = ref(false);
+const sopViewerOpen = ref(false);
+const sopResetting = ref(false);
+const sopPromptCopied = ref(false);
+let sopCopyTimer: ReturnType<typeof setTimeout> | null = null;
+
+const sop = computed(() => currentSop.value);
+
+function handleSopViewerEscape(event: KeyboardEvent) {
+  if (event.key !== "Escape" || !sopViewerOpen.value) return;
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+  sopViewerOpen.value = false;
+}
+
+// 只读正文不可聚焦，Esc 可能落到 body；在窗口捕获阶段统一处理。
+watch(sopViewerOpen, (visible) => {
+  if (visible) {
+    window.addEventListener("keydown", handleSopViewerEscape, true);
+  } else {
+    window.removeEventListener("keydown", handleSopViewerEscape, true);
+  }
+}, { flush: "sync" });
+
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", handleSopViewerEscape, true);
+});
 
 watch(() => props.open, async (visible) => {
-  if (!visible) return;
-  message.value = "";
+  if (!visible) {
+    sopViewerOpen.value = false;
+    return;
+  }
   autostartLoading.value = true;
   try {
     info.value = await invoke<StorageInfo>("get_storage_info");
   } catch (error) {
-    message.value = `无法读取设置：${String(error)}`;
+    notify(`无法读取设置：${String(error)}`);
   }
   try {
     autostartEnabled.value = await isEnabled();
   } catch (error) {
-    message.value = `无法读取开机自启状态：${String(error)}`;
+    notify(`无法读取开机自启状态：${String(error)}`);
   } finally {
     autostartLoading.value = false;
   }
@@ -50,24 +93,35 @@ watch(() => props.open, async (visible) => {
   try {
     mcpStatus.value = await invoke<McpStatus>("get_mcp_status");
   } catch (error) {
-    message.value = `无法读取 MCP 服务状态：${String(error)}`;
+    notify(`无法读取 MCP 服务状态：${String(error)}`);
   } finally {
     mcpLoading.value = false;
   }
+  await loadSopConfig();
 }, { immediate: true });
 
 function close() {
-  if (!busy.value) emit("close");
+  if (!busy.value && !sopViewerOpen.value) emit("close");
+}
+
+function handlePanelKeydown(e: KeyboardEvent) {
+  if (e.key === "Escape") {
+    if (sopViewerOpen.value) {
+      sopViewerOpen.value = false;
+      e.stopPropagation();
+      return;
+    }
+    close();
+  }
 }
 
 async function run(action: () => Promise<void>) {
   if (busy.value) return;
   busy.value = true;
-  message.value = "";
   try {
     await action();
   } catch (error) {
-    message.value = String(error);
+    notify(String(error));
   } finally {
     busy.value = false;
   }
@@ -82,7 +136,7 @@ function exportBackup() {
     });
     if (!path) return;
     await invoke("export_data", { path });
-    message.value = `已导出到 ${path}`;
+    notify(`已导出到 ${path}`);
   });
 }
 
@@ -117,7 +171,6 @@ function changeDirectory() {
 async function toggleAutostart() {
   if (autostartLoading.value) return;
   autostartLoading.value = true;
-  message.value = "";
   try {
     if (autostartEnabled.value) {
       await disable();
@@ -126,7 +179,7 @@ async function toggleAutostart() {
     }
     autostartEnabled.value = await isEnabled();
   } catch (error) {
-    message.value = `无法更新开机自启：${String(error)}`;
+    notify(`无法更新开机自启：${String(error)}`);
   } finally {
     autostartLoading.value = false;
   }
@@ -135,16 +188,15 @@ async function toggleAutostart() {
 async function toggleMcp() {
   if (mcpLoading.value) return;
   mcpLoading.value = true;
-  message.value = "";
   try {
     mcpStatus.value = await invoke<McpStatus>("set_mcp_enabled", {
       enabled: !mcpStatus.value?.enabled,
     });
     if (mcpStatus.value.enabled && !mcpStatus.value.running) {
-      message.value = mcpStatus.value.lastError ?? "MCP 服务未能启动。";
+      notify(mcpStatus.value.lastError ?? "MCP 服务未能启动。");
     }
   } catch (error) {
-    message.value = `无法更新 MCP 服务：${String(error)}`;
+    notify(`无法更新 MCP 服务：${String(error)}`);
   } finally {
     mcpLoading.value = false;
   }
@@ -153,15 +205,16 @@ async function toggleMcp() {
 async function connectCodex() {
   if (codexLoading.value) return;
   codexLoading.value = true;
-  message.value = "";
   try {
     const result = await invoke<{ opened: boolean; marketplacePath: string; deepLink: string }>("connect_codex");
     mcpStatus.value = await invoke<McpStatus>("get_mcp_status");
-    message.value = result.opened
-      ? "已打开 Codex，请在插件页面确认安装 Kanboard Agent。"
-      : `集成文件已准备好，请在 Codex 中打开：${result.deepLink}`;
+    notify(
+      result.opened
+        ? "已打开 Codex，请在插件页面确认安装 Kanboard Agent。"
+        : `集成文件已准备好，请在 Codex 中打开：${result.deepLink}`,
+    );
   } catch (error) {
-    message.value = `无法连接 Codex：${String(error)}`;
+    notify(`无法连接 Codex：${String(error)}`);
   } finally {
     codexLoading.value = false;
   }
@@ -170,22 +223,66 @@ async function connectCodex() {
 async function connectAntigravity() {
   if (antigravityLoading.value) return;
   antigravityLoading.value = true;
-  message.value = "";
   try {
     const result = await invoke<{ configPath: string; configured: boolean }>("connect_antigravity");
     mcpStatus.value = await invoke<McpStatus>("get_mcp_status");
-    message.value = `已成功配置 Antigravity！配置已写入 ${result.configPath}。`;
+    notify(`已成功配置 Antigravity！配置已写入 ${result.configPath}。`);
   } catch (error) {
-    message.value = `无法连接 Antigravity：${String(error)}`;
+    notify(`无法连接 Antigravity：${String(error)}`);
   } finally {
     antigravityLoading.value = false;
+  }
+}
+
+async function copyCustomSopPrompt() {
+  const prompt = buildCustomSopPrompt(sop.value.summary);
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(prompt);
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = prompt;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    sopPromptCopied.value = true;
+    if (sopCopyTimer) clearTimeout(sopCopyTimer);
+    sopCopyTimer = setTimeout(() => {
+      sopPromptCopied.value = false;
+    }, 2500);
+    notify("已复制【自定义 SOP】引导提示词，发送给 Agent 即可开启协同定制。");
+  } catch (err) {
+    notify(`复制提示词失败：${String(err)}`);
+  }
+}
+
+async function handleResetSop() {
+  if (sopResetting.value) return;
+  const approved = await confirm("确定将 SOP 重置为系统默认预置的标准作业流程吗？", {
+    title: "重置 SOP 规范",
+    kind: "warning",
+  });
+  if (!approved) return;
+
+  sopResetting.value = true;
+  try {
+    await resetSopConfig();
+    notify("SOP 已成功重置为系统默认规范。");
+  } catch (error) {
+    notify(`重置 SOP 失败：${String(error)}`);
+  } finally {
+    sopResetting.value = false;
   }
 }
 </script>
 
 <template>
   <div v-if="open" class="settings-backdrop" @mousedown.self="close">
-    <section class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title" @keydown.esc.stop="close">
+    <section class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title" @keydown="handlePanelKeydown">
       <header>
         <div><h2 id="settings-title">设置</h2><p>本地数据与应用信息</p></div>
         <button class="icon-button" type="button" aria-label="关闭设置" :disabled="busy" @click="close"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" /></svg></button>
@@ -248,6 +345,56 @@ async function connectAntigravity() {
           <small>连接会自动开启 MCP 服务，并写入对应 Agent 的本地插件或配置。服务仅监听 127.0.0.1，重新启动看板后会自动恢复。</small>
         </section>
 
+        <section class="settings-panel__sop-section">
+          <div class="settings-panel__toggle-row">
+            <div>
+              <h3>任务执行 SOP（标准作业流程）</h3>
+              <p>规范 Agent 接单、开发、提测与排版验收的执行标准。</p>
+            </div>
+            <span
+              class="sop-status-badge"
+              :class="{ 'is-custom': sop.isCustom }"
+            >
+              {{ sop.isCustom ? "自定义版本" : "系统默认" }}
+            </span>
+          </div>
+
+          <div class="sop-summary-card">
+            <span class="sop-summary-label">当前下发生效概述：</span>
+            <p class="sop-summary-text">{{ sop.summary }}</p>
+          </div>
+
+          <div class="settings-panel__actions">
+            <button
+              class="secondary-button"
+              type="button"
+              @click="sopViewerOpen = true"
+            >
+              查看完整 SOP
+            </button>
+            <button
+              class="secondary-button"
+              type="button"
+              :disabled="busy"
+              @click="copyCustomSopPrompt"
+            >
+              {{ sopPromptCopied ? "已复制引导词" : "协同定制 SOP" }}
+            </button>
+            <button
+              v-if="sop.isCustom"
+              class="text-button text-button--danger"
+              type="button"
+              :disabled="sopResetting"
+              @click="handleResetSop"
+            >
+              {{ sopResetting ? "重置中…" : "重置为默认" }}
+            </button>
+          </div>
+          <small>
+            通过「协同定制 SOP」复制意图提示词发给 Agent，经您明确确认后自动写入系统生效；点击「查看完整 SOP」可在大屏全屏只读浏览。
+          </small>
+        </section>
+
         <section>
           <h3>数据备份</h3>
           <p>将任务、项目、标签及相关记录导出为 SQLite 文件，或从备份恢复。</p>
@@ -272,7 +419,54 @@ async function connectAntigravity() {
           <p>当前版本 {{ info?.version ?? "读取中…" }}</p>
         </section>
       </div>
-      <p v-if="message" class="settings-panel__message" role="status">{{ message }}</p>
     </section>
+
+    <!-- SOP 规范全屏只读模态框 -->
+    <Teleport to="body">
+      <div
+        v-if="sopViewerOpen"
+        class="markdown-fullscreen-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="标准作业流程 (SOP) · 全屏只读"
+      >
+        <header class="markdown-fullscreen-modal__header">
+          <div class="markdown-fullscreen-modal__title">
+            <strong>标准作业流程 (SOP) · 全屏只读</strong>
+            <span class="markdown-fullscreen-modal__task">
+              {{ sop.isCustom ? "自定义版本" : "系统默认版本" }}
+            </span>
+          </div>
+          <div class="markdown-fullscreen-modal__info">
+            <span class="info-stat">{{ sop.content.length }} 字符</span>
+            <span class="info-sep">·</span>
+            <span class="info-stat">只读模式</span>
+            <span class="info-sep">·</span>
+            <button
+              type="button"
+              class="info-esc-btn"
+              title="按 Esc 键或点击退出全屏"
+              @click="sopViewerOpen = false"
+            >
+              <span>按</span>
+              <kbd>Esc</kbd>
+              <span>退出</span>
+            </button>
+          </div>
+        </header>
+
+        <main class="markdown-fullscreen-modal__body">
+          <MarkdownEditor
+            :key="sop.content"
+            :model-value="sop.content"
+            :readonly="true"
+            :fullscreen="true"
+            label="SOP 规范文档"
+            height="100%"
+            @toggle-fullscreen="sopViewerOpen = false"
+          />
+        </main>
+      </div>
+    </Teleport>
   </div>
 </template>

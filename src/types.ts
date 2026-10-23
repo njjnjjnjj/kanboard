@@ -108,3 +108,11 @@ export interface FlowMetrics {
   agingBuckets: Array<{ label: string; count: number }>;
   cfd: Array<{ date: string; counts: Record<string, number> }>;
 }
+
+export interface SopConfig {
+  id: string;
+  summary: string;
+  content: string;
+  isCustom: boolean;
+  updatedAt: string;
+}

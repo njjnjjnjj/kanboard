@@ -70,7 +70,27 @@ Use the `kanboard` MCP server whenever interacting with the user's Kanboard task
   | 界面交互验收 | 在看板中打开待验证任务检查器，查看「验证方案」Tab | Markdown 表格与内容优雅排版，可正常切换编辑与预览 |
   ```
 
-### 2. 工具能力索引
+### 2. 自定义 SOP 协同编写指引（【自定义 SOP】）
+
+当用户在对话中给出【自定义 SOP】或提出定制、调整看板标准作业流程（SOP）时，必须严格按照如下流程引导协作：
+
+1. **倾听与调研需求**：
+   - 主动询问或确认用户团队的技术栈特性、流程门禁（如是否必须 TDD / 单元测试先行、是否需要架构审查、交付物与排版规范等）以及期望调整的具体环节。
+2. **拟定双轨 SOP 方案**：
+   - 输出完整的定制草案，草案必须同时包含两个部分：
+     - **SOP 概述（`summary`）**：简明精炼（1 至 3 句话），此内容将在任务拖拽/下发时自动注入提示词尾部约束执行模型；
+     - **完整 SOP 规范文档（`content`）**：结构清晰的 Markdown 详尽文档，包含接单流程、步骤指引、排版规范与验收模板。
+3. **用户明确确认（安全门禁）**：
+   - **Agent 严禁在未经用户明确确认前私自调用写入工具！**
+   - 必须向用户完整呈现拟定的概述与文档内容，并提示用户回复确认（例如回复「确认应用」或「确认写入」）。
+4. **调用工具落盘写入**：
+   - 获得用户明确肯定答复后，调用专用工具：
+     `set_custom_sop(summary="...", content="...")`
+     系统将实时持久化写入数据库，看板端即刻生效，无需重启应用。
+5. **支持随时重置**：
+   - 若用户需要还原系统初始标准流程，可告知用户在设置面板点击「重置为默认」，或由 Agent 调用 `reset_custom_sop()` 工具完成重置。
+
+### 3. 工具能力索引
 
 - **查询类**：
   - `get_dashboard_summary`: 看板全景概览（逾期、高优、WIP 超限等），用于晨会或批量排期；
@@ -78,13 +98,16 @@ Use the `kanboard` MCP server whenever interacting with the user's Kanboard task
   - `get_task`: 获取单任务详细属性、检查项及完整历史轨迹；
   - `search_tasks`: 模糊检索任务；
   - `list_projects`: 获取所有项目信息及各状态任务分布；
-  - `get_flow_metrics`: 看板效能度量（吞吐量、周期耗时、WIP 老化等）。
+  - `get_flow_metrics`: 看板效能度量（吞吐量、周期耗时、WIP 老化等）；
+  - `get_custom_sop`: 获取当前 Kanboard 生效的 SOP，包含概述 summary、完整 Markdown 规范 content 与自定义状态。
 - **执行与变更类**：
   - `submit_task_verification`: 提交任务提测并流转至 `verify` 列，录入结构化实现方案、交付成果与测试指南（支持表格排版、严格中英文空格、无 emoji、禁止单行堆砌）；
   - `update_task_status`: 变更任务列状态（`todo` / `ready` / `doing` / `verify` / `blocked` / `done`），支持可选 `review_notes`；
   - `update_checklist_item`: 勾选/取消勾选子项；
   - `append_task_notes`: 追加带时间戳的阶段性日志或备注；
   - `set_task_blocked`: 异常阻塞上报与弹窗通知；
-  - `set_project_path`: 设置或更新项目本地代码库路径。
+  - `set_project_path`: 设置或更新项目本地代码库路径；
+  - `set_custom_sop`: 经用户明确确认后，持久化写入自定义 SOP 概述与完整规范文档；
+  - `reset_custom_sop`: 重置 SOP 为系统初始默认规范。
 
 如果 MCP 服务不可用，提示用户打开 Kanboard 桌面端并在「设置 > AI 集成」中启动 MCP 服务。

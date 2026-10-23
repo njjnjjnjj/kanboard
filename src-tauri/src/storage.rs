@@ -102,6 +102,11 @@ pub(crate) fn migrations() -> Migrator {
             "add_task_review_notes",
             include_str!("../migrations/0007_task_review.sql"),
         ),
+        (
+            8,
+            "add_custom_sop",
+            include_str!("../migrations/0008_custom_sop.sql"),
+        ),
     ];
     Migrator {
         migrations: Cow::Owned(
