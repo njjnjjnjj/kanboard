@@ -16,6 +16,7 @@ const props = withDefaults(
     height?: number | string;
     minHeight?: number;
     fullscreen?: boolean;
+    readonly?: boolean;
   }>(),
   {
     label: "",
@@ -26,6 +27,7 @@ const props = withDefaults(
     height: "100%",
     minHeight: 180,
     fullscreen: false,
+    readonly: false,
   },
 );
 
@@ -139,6 +141,7 @@ onMounted(() => {
       },
       toolbarConfig: {
         pin: true,
+        hide: false,
       },
       toolbar: [
         "headings",
@@ -175,15 +178,19 @@ onMounted(() => {
               },
             ]),
       ],
-      upload: {
-        accept: "image/*",
-        multiple: true,
-        async handler(files) {
-          await handleUpload(files);
-          return null;
-        },
-      },
+      upload: props.readonly
+        // Vditor 会直接读取 upload.url，不能用 undefined 覆盖默认配置。
+        ? {}
+        : {
+            accept: "image/*",
+            multiple: true,
+            async handler(files) {
+              await handleUpload(files);
+              return null;
+            },
+          },
       input(val) {
+        if (props.readonly) return;
         isInternalChange = true;
         emit("update:modelValue", val);
         nextTick(resolveLocalImages);
@@ -193,6 +200,16 @@ onMounted(() => {
       },
       after() {
         isReady.value = true;
+        if (props.modelValue && safeGetValue() !== props.modelValue) {
+          safeSetValue(props.modelValue);
+        }
+        if (props.readonly && vditor) {
+          try {
+            (vditor as any).disabled?.();
+          } catch {
+            // ignore
+          }
+        }
         nextTick(resolveLocalImages);
         if (editorEl.value) {
           const fsContainer = editorEl.value.querySelector(".vditor-toolbar__item--fullscreen-btn");
@@ -238,6 +255,23 @@ watch(
   },
 );
 
+watch(
+  () => props.readonly,
+  (isRo) => {
+    if (vditor && isReady.value) {
+      try {
+        if (isRo) {
+          (vditor as any).disabled?.();
+        } else {
+          (vditor as any).enable?.();
+        }
+      } catch {
+        // ignore
+      }
+    }
+  },
+);
+
 onBeforeUnmount(() => {
   isReady.value = false;
   if (vditor) {
@@ -252,7 +286,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="kanboard-markdown-editor" :class="{ 'kanboard-markdown-editor--fullscreen': fullscreen }">
+  <div
+    class="kanboard-markdown-editor"
+    :class="{
+      'kanboard-markdown-editor--fullscreen': fullscreen,
+      'kanboard-markdown-editor--readonly': readonly,
+    }"
+  >
     <!-- 同步辅助元素（供自动化测试以及表单原生交互定位） -->
     <textarea
       v-if="dataInspectorDescription"
