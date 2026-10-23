@@ -28,7 +28,9 @@ type TabType = typeof TABS[number];
 const confirmingDelete = ref(false);
 const activeTab = ref<TabType>("details");
 const isEditingVerification = ref(false);
-const isFullscreenVerificationPreview = ref(false);
+const isEditingDescription = ref(false);
+const fullscreenTarget = ref<"description" | "verification" | null>(null);
+const fullscreenViewMode = ref<"preview" | "edit" | "split">("preview");
 
 const statusOptions = computed(() =>
   props.columns.map((column) => ({ value: column.id, label: column.title })),
@@ -76,23 +78,41 @@ const renderedVerificationNotes = computed(() => {
   return renderMarkdown(draft.reviewNotes || "");
 });
 
-watch(isFullscreenVerificationPreview, (val) => {
-  if (val) {
-    window.addEventListener("keydown", handleVerificationEsc);
-  } else {
-    window.removeEventListener("keydown", handleVerificationEsc);
-  }
+const renderedDescription = computed(() => {
+  return renderMarkdown(draft.description || "");
 });
 
-function handleVerificationEsc(e: KeyboardEvent) {
-  if (e.key === "Escape" && isFullscreenVerificationPreview.value) {
+function openFullscreenDescription() {
+  fullscreenTarget.value = "description";
+  fullscreenViewMode.value = isEditingDescription.value ? "edit" : "preview";
+}
+
+function openFullscreenVerification() {
+  fullscreenTarget.value = "verification";
+  fullscreenViewMode.value = isEditingVerification.value ? "edit" : "preview";
+}
+
+function closeFullscreen() {
+  fullscreenTarget.value = null;
+}
+
+function handleFullscreenEsc(e: KeyboardEvent) {
+  if (e.key === "Escape" && fullscreenTarget.value) {
     e.preventDefault();
-    isFullscreenVerificationPreview.value = false;
+    closeFullscreen();
   }
 }
 
+watch(fullscreenTarget, (val) => {
+  if (val) {
+    window.addEventListener("keydown", handleFullscreenEsc);
+  } else {
+    window.removeEventListener("keydown", handleFullscreenEsc);
+  }
+});
+
 onBeforeUnmount(() => {
-  window.removeEventListener("keydown", handleVerificationEsc);
+  window.removeEventListener("keydown", handleFullscreenEsc);
 });
 
 watch(
@@ -102,6 +122,7 @@ watch(
     if (!previousTask || task.id !== previousTask.id) {
       activeTab.value = task.columnId === "verify" ? "verification" : "details";
       isEditingVerification.value = false;
+      isEditingDescription.value = !task.description;
     }
     draft.title = task.title;
     draft.description = task.description;
@@ -278,13 +299,63 @@ async function handleTabKeydown(event: KeyboardEvent) {
         <div class="field field--description">
           <div class="field-header">
             <span>任务说明</span>
+            <div class="field-header-actions">
+              <button
+                type="button"
+                class="fullscreen-toggle-btn"
+                title="全屏编辑与预览 (Esc 退出)"
+                @click="openFullscreenDescription"
+              >
+                全屏
+              </button>
+              <div class="description-view-toggle">
+                <button
+                  type="button"
+                  class="desc-toggle-btn"
+                  :class="{ 'desc-toggle-btn--active': !isEditingDescription }"
+                  :disabled="!draft.description.trim()"
+                  @click="isEditingDescription = false"
+                >
+                  预览
+                </button>
+                <button
+                  type="button"
+                  class="desc-toggle-btn"
+                  :class="{ 'desc-toggle-btn--active': isEditingDescription }"
+                  @click="isEditingDescription = true"
+                >
+                  编辑
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="!isEditingDescription && draft.description.trim()"
+            class="description-preview markdown-body"
+            v-html="renderedDescription"
+          />
+          <div
+            v-else-if="!isEditingDescription && !draft.description.trim()"
+            class="verification-empty description-empty"
+          >
+            <p>暂无任务说明。点击“编辑”编写背景、下一步或注意事项。</p>
+            <button
+              type="button"
+              class="secondary-button"
+              @click="isEditingDescription = true"
+            >
+              编写任务说明
+            </button>
           </div>
           <MarkdownEditor
+            v-show="isEditingDescription"
             v-model="draft.description"
             label="任务说明"
             placeholder="记录背景、下一步或需要注意的信息（支持 Markdown、表格、图片上传、Ctrl+V 粘贴与全屏编辑）"
             :task-title="draft.title"
             :data-inspector-description="true"
+            :preview="false"
             height="240px"
           />
         </div>
@@ -317,13 +388,12 @@ async function handleTabKeydown(event: KeyboardEvent) {
             <span>验证方案说明</span>
             <div class="field-header-actions">
               <button
-                v-if="!isEditingVerification && draft.reviewNotes.trim()"
                 type="button"
                 class="fullscreen-toggle-btn"
-                title="全屏预览 (Esc 退出)"
-                @click="isFullscreenVerificationPreview = true"
+                title="全屏编辑与预览 (Esc 退出)"
+                @click="openFullscreenVerification"
               >
-                全屏预览
+                全屏
               </button>
               <div class="verification-view-toggle">
                 <button
@@ -386,6 +456,7 @@ async function handleTabKeydown(event: KeyboardEvent) {
 | 自动化单测 | `npm test` | 通过全部测试 |"
             :task-title="draft.title"
             :data-inspector-review-notes="true"
+            :preview="false"
             height="320px"
           />
         </div>
@@ -408,31 +479,106 @@ async function handleTabKeydown(event: KeyboardEvent) {
       </footer>
     </form>
 
-    <!-- 验证方案独立全屏预览遮罩 -->
+    <!-- 任务说明与验证方案统一全屏沉浸弹层 -->
     <Teleport to="body">
       <div
-        v-if="isFullscreenVerificationPreview"
-        class="markdown-preview-fullscreen"
+        v-if="fullscreenTarget"
+        class="markdown-fullscreen-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="全屏预览验证方案"
+        :aria-label="fullscreenTarget === 'description' ? '全屏任务说明' : '全屏验证方案'"
       >
-        <header class="markdown-preview-fullscreen__header">
-          <div class="markdown-preview-fullscreen__title">
-            <strong>验证方案 - 全屏预览</strong>
-            <span v-if="draft.title" class="markdown-preview-fullscreen__task">{{ draft.title }}</span>
+        <header class="markdown-fullscreen-modal__header">
+          <div class="markdown-fullscreen-modal__title">
+            <strong>{{ fullscreenTarget === 'description' ? '任务说明' : '验证方案' }} · 全屏</strong>
+            <span v-if="draft.title" class="markdown-fullscreen-modal__task">{{ draft.title }}</span>
           </div>
-          <div class="markdown-preview-fullscreen__actions">
+          <div class="markdown-fullscreen-modal__actions">
+            <div class="verification-view-toggle">
+              <button
+                type="button"
+                class="view-toggle-btn"
+                :class="{ 'view-toggle-btn--active': fullscreenViewMode === 'preview' }"
+                @click="fullscreenViewMode = 'preview'"
+              >
+                预览
+              </button>
+              <button
+                type="button"
+                class="view-toggle-btn"
+                :class="{ 'view-toggle-btn--active': fullscreenViewMode === 'edit' }"
+                @click="fullscreenViewMode = 'edit'"
+              >
+                编辑
+              </button>
+              <button
+                type="button"
+                class="view-toggle-btn"
+                :class="{ 'view-toggle-btn--active': fullscreenViewMode === 'split' }"
+                @click="fullscreenViewMode = 'split'"
+              >
+                分屏对照
+              </button>
+            </div>
             <button
               type="button"
               class="secondary-button"
-              @click="isFullscreenVerificationPreview = false"
+              @click="closeFullscreen"
             >
               退出全屏 (Esc)
             </button>
           </div>
         </header>
-        <main class="markdown-preview-fullscreen__content markdown-body" v-html="renderedVerificationNotes" />
+
+        <main class="markdown-fullscreen-modal__body">
+          <div
+            v-if="fullscreenViewMode === 'preview'"
+            class="markdown-fullscreen-modal__preview markdown-body"
+            v-html="fullscreenTarget === 'description' ? renderedDescription : renderedVerificationNotes"
+          />
+          <div
+            v-else-if="fullscreenViewMode === 'edit'"
+            class="markdown-fullscreen-modal__editor"
+          >
+            <MarkdownEditor
+              v-if="fullscreenTarget === 'description'"
+              v-model="draft.description"
+              label="任务说明"
+              :task-title="draft.title"
+              :preview="false"
+              height="100%"
+            />
+            <MarkdownEditor
+              v-else
+              v-model="draft.reviewNotes"
+              label="验证方案"
+              :task-title="draft.title"
+              :preview="false"
+              height="100%"
+            />
+          </div>
+          <div
+            v-else-if="fullscreenViewMode === 'split'"
+            class="markdown-fullscreen-modal__editor markdown-fullscreen-modal__editor--split"
+          >
+            <MarkdownEditor
+              v-if="fullscreenTarget === 'description'"
+              v-model="draft.description"
+              label="任务说明"
+              :task-title="draft.title"
+              :preview="true"
+              height="100%"
+            />
+            <MarkdownEditor
+              v-else
+              v-model="draft.reviewNotes"
+              label="验证方案"
+              :task-title="draft.title"
+              :preview="true"
+              height="100%"
+            />
+          </div>
+        </main>
       </div>
     </Teleport>
   </aside>

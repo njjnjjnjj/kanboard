@@ -23,38 +23,7 @@ config({
   },
 });
 
-const props = withDefaults(
-  defineProps<{
-    modelValue: string;
-    label?: string;
-    placeholder?: string;
-    taskTitle?: string;
-    dataInspectorDescription?: boolean;
-    dataInspectorReviewNotes?: boolean;
-    previewOnly?: boolean;
-    height?: string;
-  }>(),
-  {
-    label: "",
-    placeholder: "支持 Markdown 格式与图片粘贴…",
-    taskTitle: "",
-    dataInspectorDescription: false,
-    dataInspectorReviewNotes: false,
-    previewOnly: false,
-    height: "360px",
-  },
-);
-
-const emit = defineEmits<{
-  "update:modelValue": [value: string];
-}>();
-
-const content = computed({
-  get: () => props.modelValue || "",
-  set: (val: string) => emit("update:modelValue", val),
-});
-
-const toolbars: ToolbarNames[] = [
+const defaultToolbars: ToolbarNames[] = [
   "bold",
   "underline",
   "italic",
@@ -74,12 +43,44 @@ const toolbars: ToolbarNames[] = [
   "-",
   "revoke",
   "next",
-  "=",
-  "pageFullscreen",
-  "fullscreen",
-  "preview",
-  "previewOnly",
 ];
+
+const props = withDefaults(
+  defineProps<{
+    modelValue: string;
+    label?: string;
+    placeholder?: string;
+    taskTitle?: string;
+    dataInspectorDescription?: boolean;
+    dataInspectorReviewNotes?: boolean;
+    preview?: boolean;
+    previewOnly?: boolean;
+    height?: string;
+    footers?: any[];
+    toolbars?: ToolbarNames[];
+  }>(),
+  {
+    label: "",
+    placeholder: "支持 Markdown 格式与图片粘贴…",
+    taskTitle: "",
+    dataInspectorDescription: false,
+    dataInspectorReviewNotes: false,
+    preview: false,
+    previewOnly: false,
+    height: "260px",
+    footers: () => [],
+    toolbars: undefined,
+  },
+);
+
+const emit = defineEmits<{
+  "update:modelValue": [value: string];
+}>();
+
+const content = computed({
+  get: () => props.modelValue || "",
+  set: (val: string) => emit("update:modelValue", val),
+});
 
 async function handleUploadImg(
   files: Array<File>,
@@ -126,8 +127,10 @@ async function handleUploadImg(
       language="zh-CN"
       preview-theme="github"
       :placeholder="placeholder"
-      :toolbars="toolbars"
+      :toolbars="toolbars || defaultToolbars"
+      :preview="preview"
       :preview-only="previewOnly"
+      :footers="footers"
       :style="{ height: height }"
       class="kanboard-md-editor-instance"
       :on-upload-img="handleUploadImg"
