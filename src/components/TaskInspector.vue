@@ -1,16 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from "vue";
-import { marked } from "marked";
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import DateInput from "./DateInput.vue";
+import MarkdownEditor from "./MarkdownEditor.vue";
 import TagInput from "./TagInput.vue";
 import TaskChecklist from "./TaskChecklist.vue";
 import TaskSelect from "./TaskSelect.vue";
+import { renderMarkdown } from "../utils/markdownRenderer";
 import type { BlockedReason, Project, Tag, Task, TaskChanges, TaskColumn } from "../types";
-
-marked.use({
-  breaks: true,
-  gfm: true,
-});
 
 const props = defineProps<{
   task: Task;
@@ -32,6 +28,7 @@ type TabType = typeof TABS[number];
 const confirmingDelete = ref(false);
 const activeTab = ref<TabType>("details");
 const isEditingVerification = ref(false);
+const isFullscreenVerificationPreview = ref(false);
 
 const statusOptions = computed(() =>
   props.columns.map((column) => ({ value: column.id, label: column.title })),
@@ -76,13 +73,26 @@ const draft = reactive<TaskChanges>({
 });
 
 const renderedVerificationNotes = computed(() => {
-  if (!draft.reviewNotes?.trim()) return "";
-  try {
-    return marked.parse(draft.reviewNotes) as string;
-  } catch (err) {
-    console.error("Failed to parse markdown", err);
-    return draft.reviewNotes;
+  return renderMarkdown(draft.reviewNotes || "");
+});
+
+watch(isFullscreenVerificationPreview, (val) => {
+  if (val) {
+    window.addEventListener("keydown", handleVerificationEsc);
+  } else {
+    window.removeEventListener("keydown", handleVerificationEsc);
   }
+});
+
+function handleVerificationEsc(e: KeyboardEvent) {
+  if (e.key === "Escape" && isFullscreenVerificationPreview.value) {
+    e.preventDefault();
+    isFullscreenVerificationPreview.value = false;
+  }
+}
+
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", handleVerificationEsc);
 });
 
 watch(
@@ -265,15 +275,19 @@ async function handleTabKeydown(event: KeyboardEvent) {
           <TagInput v-model="draft.tagNames" :suggestions="tags" />
         </div>
 
-        <label class="field field--description">
-          <span>任务说明</span>
-          <textarea
-            data-inspector-description
+        <div class="field field--description">
+          <div class="field-header">
+            <span>任务说明</span>
+          </div>
+          <MarkdownEditor
             v-model="draft.description"
-            rows="8"
-            placeholder="记录背景、下一步或需要注意的信息"
+            label="任务说明"
+            placeholder="记录背景、下一步或需要注意的信息（支持 Markdown、表格、图片上传、Ctrl+V 粘贴与全屏编辑）"
+            :task-title="draft.title"
+            :data-inspector-description="true"
+            height="240px"
           />
-        </label>
+        </div>
       </section>
 
       <section id="task-checklist-panel" v-show="activeTab === 'checklist'" class="task-inspector__panel task-inspector__panel--checklist" role="tabpanel" aria-labelledby="task-checklist-tab" data-tour="checklist">
@@ -301,24 +315,35 @@ async function handleTabKeydown(event: KeyboardEvent) {
         <div class="field field--verification-notes">
           <div class="field-header">
             <span>验证方案说明</span>
-            <div class="verification-view-toggle">
+            <div class="field-header-actions">
               <button
+                v-if="!isEditingVerification && draft.reviewNotes.trim()"
                 type="button"
-                class="view-toggle-btn"
-                :class="{ 'view-toggle-btn--active': !isEditingVerification }"
-                :disabled="!draft.reviewNotes.trim()"
-                @click="isEditingVerification = false"
+                class="fullscreen-toggle-btn"
+                title="全屏预览 (Esc 退出)"
+                @click="isFullscreenVerificationPreview = true"
               >
-                预览
+                全屏预览
               </button>
-              <button
-                type="button"
-                class="view-toggle-btn"
-                :class="{ 'view-toggle-btn--active': isEditingVerification }"
-                @click="isEditingVerification = true"
-              >
-                编辑
-              </button>
+              <div class="verification-view-toggle">
+                <button
+                  type="button"
+                  class="view-toggle-btn"
+                  :class="{ 'view-toggle-btn--active': !isEditingVerification }"
+                  :disabled="!draft.reviewNotes.trim()"
+                  @click="isEditingVerification = false"
+                >
+                  预览
+                </button>
+                <button
+                  type="button"
+                  class="view-toggle-btn"
+                  :class="{ 'view-toggle-btn--active': isEditingVerification }"
+                  @click="isEditingVerification = true"
+                >
+                  编辑
+                </button>
+              </div>
             </div>
           </div>
 
@@ -341,11 +366,10 @@ async function handleTabKeydown(event: KeyboardEvent) {
               编写验证方案
             </button>
           </div>
-          <textarea
+          <MarkdownEditor
             v-else
-            data-inspector-review-notes
             v-model="draft.reviewNotes"
-            rows="16"
+            label="验证方案"
             placeholder="请使用结构化 Markdown 编写验证方案（优先使用表格、清单与代码块分项呈现，避免单行堆砌）：
 
 ### 1. 核心改动与实现方案
@@ -360,6 +384,9 @@ async function handleTabKeydown(event: KeyboardEvent) {
 | 验证项 | 测试命令 / 操作步骤 | 预期效果 |
 | :--- | :--- | :--- |
 | 自动化单测 | `npm test` | 通过全部测试 |"
+            :task-title="draft.title"
+            :data-inspector-review-notes="true"
+            height="320px"
           />
         </div>
       </section>
@@ -380,5 +407,33 @@ async function handleTabKeydown(event: KeyboardEvent) {
         </div>
       </footer>
     </form>
+
+    <!-- 验证方案独立全屏预览遮罩 -->
+    <Teleport to="body">
+      <div
+        v-if="isFullscreenVerificationPreview"
+        class="markdown-preview-fullscreen"
+        role="dialog"
+        aria-modal="true"
+        aria-label="全屏预览验证方案"
+      >
+        <header class="markdown-preview-fullscreen__header">
+          <div class="markdown-preview-fullscreen__title">
+            <strong>验证方案 - 全屏预览</strong>
+            <span v-if="draft.title" class="markdown-preview-fullscreen__task">{{ draft.title }}</span>
+          </div>
+          <div class="markdown-preview-fullscreen__actions">
+            <button
+              type="button"
+              class="secondary-button"
+              @click="isFullscreenVerificationPreview = false"
+            >
+              退出全屏 (Esc)
+            </button>
+          </div>
+        </header>
+        <main class="markdown-preview-fullscreen__content markdown-body" v-html="renderedVerificationNotes" />
+      </div>
+    </Teleport>
   </aside>
 </template>

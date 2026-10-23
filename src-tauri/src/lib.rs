@@ -176,6 +176,8 @@ pub fn run() {
             storage::export_data,
             storage::import_data,
             storage::move_storage,
+            storage::save_image_attachment,
+            storage::resolve_attachment_path,
             mcp::get_mcp_status,
             mcp::set_mcp_enabled,
             mcp::connect_codex,

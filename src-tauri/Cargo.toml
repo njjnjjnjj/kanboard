@@ -14,6 +14,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 axum = "0.8"
+base64 = "0.22"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 open = "5"
 rmcp = { version = "3.4", features = ["server", "transport-streamable-http-server", "transport-streamable-http-server-session"] }
@@ -23,7 +24,7 @@ sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runti
 tokio = { version = "1", features = ["net", "rt-multi-thread", "sync"] }
 tokio-util = "0.7"
 url = "2"
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "protocol-asset"] }
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"

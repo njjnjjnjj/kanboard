@@ -6,6 +6,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use base64::prelude::*;
 use serde::{Deserialize, Serialize};
 use sqlx::{
     migrate::{Migration, MigrationType, Migrator},
@@ -41,6 +42,15 @@ pub struct StorageInfo {
     path: String,
     directory: String,
     version: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentResult {
+    pub relative_path: String,
+    pub absolute_path: String,
+    pub file_name: String,
+    pub file_size: usize,
 }
 
 fn error(value: impl std::fmt::Display) -> String {
@@ -205,6 +215,20 @@ async fn snapshot(pool: &SqlitePool, target: &Path) -> Result<(), String> {
     validate(target).await
 }
 
+fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        if ty.is_dir() {
+            copy_dir_all(&entry.path(), &dst.join(entry.file_name()))?;
+        } else {
+            fs::copy(entry.path(), dst.join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
 pub fn initialize(app: &AppHandle) -> Result<StorageState, String> {
     let config_dir = app.path().app_config_dir().map_err(error)?;
     fs::create_dir_all(&config_dir).map_err(error)?;
@@ -318,13 +342,23 @@ pub async fn move_storage(
         return Err(err);
     }
     let location = serde_json::to_vec(&Location {
-        directory: target_dir,
+        directory: target_dir.clone(),
     })
     .map_err(error)?;
     if let Err(err) = fs::write(state.config_dir.join(LOCATION_FILE), location) {
         let _ = fs::remove_file(&target);
         return Err(error(err));
     }
+
+    // 随同将 attachments 附件目录迁移至新目录
+    if let Some(old_parent) = old_path.parent() {
+        let old_attachments = old_parent.join("attachments");
+        if old_attachments.is_dir() {
+            let target_attachments = target_dir.join("attachments");
+            let _ = copy_dir_all(&old_attachments, &target_attachments);
+        }
+    }
+
     for DbPool::Sqlite(pool) in guard.values() {
         pool.close().await;
     }
@@ -404,6 +438,152 @@ pub async fn import_data(
     Ok(previous.to_string_lossy().into_owned())
 }
 
+fn detect_image_format(data: &[u8], hint_ext: Option<&str>) -> Result<&'static str, String> {
+    if data.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+        Ok("png")
+    } else if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Ok("jpg")
+    } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+        Ok("gif")
+    } else if data.len() > 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        Ok("webp")
+    } else if data.starts_with(b"BM") {
+        Ok("bmp")
+    } else if let Ok(s) = std::str::from_utf8(data) {
+        let trimmed = s.trim_start();
+        if trimmed.starts_with("<svg") || (trimmed.starts_with("<?xml") && trimmed.contains("<svg")) {
+            Ok("svg")
+        } else {
+            Err("不支持的图片格式：非合法矢量或位图".into())
+        }
+    } else if let Some(ext) = hint_ext {
+        match ext.to_lowercase().as_str() {
+            "png" => Ok("png"),
+            "jpg" | "jpeg" => Ok("jpg"),
+            "gif" => Ok("gif"),
+            "webp" => Ok("webp"),
+            "bmp" => Ok("bmp"),
+            "svg" => Ok("svg"),
+            _ => Err("不支持的图片扩展名".into()),
+        }
+    } else {
+        Err("不支持的图片格式".into())
+    }
+}
+
+fn sanitize_stem(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(30)
+        .collect()
+}
+
+pub fn save_image_attachment_impl(
+    storage_dir: &Path,
+    file_name: &str,
+    data_base64: &str,
+) -> Result<AttachmentResult, String> {
+    let raw_b64 = if let Some(pos) = data_base64.find("base64,") {
+        &data_base64[pos + 7..]
+    } else {
+        data_base64
+    };
+
+    let data = BASE64_STANDARD.decode(raw_b64.trim()).map_err(error)?;
+    if data.is_empty() {
+        return Err("图片数据不能为空".into());
+    }
+    if data.len() > 20 * 1024 * 1024 {
+        return Err("图片大小不能超过 20MB".into());
+    }
+
+    let hint_ext = Path::new(file_name)
+        .extension()
+        .and_then(|e| e.to_str());
+    let ext = detect_image_format(&data, hint_ext)?;
+
+    let now = chrono::Local::now();
+    let year = now.format("%Y").to_string();
+    let month = now.format("%m").to_string();
+    let timestamp = now.format("%Y%m%d_%H%M%S").to_string();
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+
+    let stem = Path::new(file_name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(sanitize_stem)
+        .unwrap_or_default();
+
+    let final_name = if stem.is_empty() || stem == "image" || stem == "blob" {
+        format!("img_{timestamp}_{stamp:06x}.{ext}")
+    } else {
+        format!("{stem}_{timestamp}_{stamp:06x}.{ext}")
+    };
+
+    let attachments_dir = storage_dir.join("attachments");
+    let sub_dir = attachments_dir.join(&year).join(&month);
+    fs::create_dir_all(&sub_dir).map_err(error)?;
+
+    let canonical_storage = fs::canonicalize(storage_dir).map_err(error)?;
+    let canonical_sub_dir = fs::canonicalize(&sub_dir).map_err(error)?;
+    if !canonical_sub_dir.starts_with(&canonical_storage) {
+        return Err("非法存储路径：超出允许目录范围".into());
+    }
+
+    let target_file = sub_dir.join(&final_name);
+    fs::write(&target_file, &data).map_err(error)?;
+
+    let relative_path = format!("attachments/{year}/{month}/{final_name}");
+    let absolute_path = target_file.to_string_lossy().replace('\\', "/");
+
+    Ok(AttachmentResult {
+        relative_path,
+        absolute_path,
+        file_name: final_name,
+        file_size: data.len(),
+    })
+}
+
+#[tauri::command]
+pub fn save_image_attachment(
+    state: tauri::State<'_, StorageState>,
+    file_name: String,
+    data_base64: String,
+) -> Result<AttachmentResult, String> {
+    let db_path = current_path(&state);
+    let storage_dir = db_path.parent().ok_or("数据库路径无效")?;
+    save_image_attachment_impl(storage_dir, &file_name, &data_base64)
+}
+
+#[tauri::command]
+pub fn resolve_attachment_path(
+    state: tauri::State<'_, StorageState>,
+    relative_path: String,
+) -> Result<String, String> {
+    if relative_path.contains("..")
+        || relative_path.starts_with('/')
+        || relative_path.starts_with('\\')
+        || relative_path.contains(':')
+    {
+        return Err("非法路径参数".into());
+    }
+    let db_path = current_path(&state);
+    let storage_dir = db_path.parent().ok_or("数据库路径无效")?;
+    let target = storage_dir.join(&relative_path);
+    if !target.exists() {
+        return Err("附件不存在".into());
+    }
+    let canonical_storage = fs::canonicalize(storage_dir).map_err(error)?;
+    let canonical_target = fs::canonicalize(&target).map_err(error)?;
+    if !canonical_target.starts_with(&canonical_storage) {
+        return Err("非法路径参数：超出允许目录范围".into());
+    }
+    Ok(canonical_target.to_string_lossy().replace('\\', "/"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,5 +633,31 @@ mod tests {
             fs::remove_file(backup).unwrap();
             fs::remove_dir(directory).unwrap();
         });
+    }
+
+    #[test]
+    fn save_image_attachment_and_validation() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "kanboard-att-test-{}",
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // 1. Valid 1x1 PNG data
+        let valid_png_base64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        let res = save_image_attachment_impl(&temp_dir, "test.png", valid_png_base64).unwrap();
+        assert!(res.relative_path.starts_with("attachments/"));
+        assert!(res.relative_path.ends_with(".png"));
+        assert!(Path::new(&res.absolute_path).is_file());
+        assert_eq!(res.file_size, 70);
+
+        // 2. Reject empty data
+        assert!(save_image_attachment_impl(&temp_dir, "test.png", "").is_err());
+
+        // 3. Reject corrupted non-image data
+        let invalid_base64 = BASE64_STANDARD.encode(b"not an image text");
+        assert!(save_image_attachment_impl(&temp_dir, "test.png", &invalid_base64).is_err());
+
+        let _ = fs::remove_dir_all(temp_dir);
     }
 }
