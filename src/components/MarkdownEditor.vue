@@ -2,6 +2,7 @@
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from "vue";
 import Vditor from "vditor";
 import "vditor/dist/index.css";
+import { createElement, Maximize2, Minimize2 } from "lucide";
 import { saveImageAttachment, resolveImageSrc } from "../services/attachmentService";
 
 const props = withDefaults(
@@ -97,6 +98,22 @@ async function handleUpload(files: File[]) {
   }
 }
 
+function getLucideIconHtml(iconDef: any): string {
+  if (typeof document !== "undefined") {
+    try {
+      const el = createElement(iconDef, {
+        width: 15,
+        height: 15,
+        "stroke-width": 1.8,
+      });
+      return el.outerHTML;
+    } catch {
+      // fallback to empty string
+    }
+  }
+  return "";
+}
+
 defineExpose({
   handleUpload,
   getVditor: () => vditor,
@@ -146,11 +163,9 @@ onMounted(() => {
         {
           name: "fullscreen-custom",
           tip: props.fullscreen ? "退出全屏 (Esc)" : "全屏编辑 (Esc 退出)",
-          tipPosition: "nw",
-          className: "vditor-toolbar__item--fullscreen-btn fullscreen-toggle-btn",
-          icon: props.fullscreen
-            ? '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7"/></svg>'
-            : '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>',
+          tipPosition: "s",
+          className: "vditor-toolbar__item--fullscreen-btn",
+          icon: getLucideIconHtml(props.fullscreen ? Minimize2 : Maximize2),
           click() {
             emit("toggleFullscreen");
           },
@@ -201,6 +216,19 @@ watch(
       if (current !== null && current !== (newVal || "")) {
         safeSetValue(newVal || "");
         nextTick(resolveLocalImages);
+      }
+    }
+  },
+);
+
+watch(
+  () => props.fullscreen,
+  (isFs) => {
+    if (editorEl.value) {
+      const fsBtn = editorEl.value.querySelector(".vditor-toolbar__item--fullscreen-btn button");
+      if (fsBtn) {
+        fsBtn.innerHTML = getLucideIconHtml(isFs ? Minimize2 : Maximize2);
+        fsBtn.setAttribute("aria-label", isFs ? "退出全屏 (Esc)" : "全屏编辑 (Esc 退出)");
       }
     }
   },

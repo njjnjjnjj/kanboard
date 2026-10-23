@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { Minimize2 } from "lucide-vue-next";
 import DateInput from "./DateInput.vue";
 import MarkdownEditor from "./MarkdownEditor.vue";
 import TagInput from "./TagInput.vue";
@@ -385,10 +386,11 @@ async function handleTabKeydown(event: KeyboardEvent) {
           <div class="markdown-fullscreen-modal__actions">
             <button
               type="button"
-              class="secondary-button"
+              class="secondary-button markdown-fullscreen-modal__exit-btn"
               @click="closeFullscreen"
             >
-              退出全屏 (Esc)
+              <Minimize2 :size="14" />
+              <span>退出全屏 (Esc)</span>
             </button>
           </div>
         </header>

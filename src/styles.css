@@ -865,7 +865,7 @@ kbd {
   border-radius: 6px;
   background-color: #fffefa;
   font-family: inherit;
-  overflow: hidden;
+  overflow: visible !important;
 }
 
 .kanboard-markdown-editor .vditor:focus-within {
@@ -876,12 +876,15 @@ kbd {
 .kanboard-markdown-editor .vditor-toolbar {
   background-color: #f7f7f3;
   border-bottom: 1px solid var(--line-soft);
-  padding: 4px 8px;
+  padding: 0 8px;
   box-sizing: border-box;
   display: flex !important;
   align-items: center !important;
   flex-wrap: wrap;
   gap: 2px;
+  border-radius: 6px 6px 0 0;
+  position: relative;
+  z-index: 20;
 }
 
 .kanboard-markdown-editor .vditor-toolbar__item button {
@@ -896,20 +899,69 @@ kbd {
 
 .kanboard-markdown-editor .vditor-toolbar__item--fullscreen-btn {
   margin-left: auto !important;
+  display: flex !important;
+  align-items: center !important;
 }
 
 .kanboard-markdown-editor .vditor-toolbar__item--fullscreen-btn button {
-  color: var(--muted);
+  color: var(--muted) !important;
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
-  padding: 4px !important;
-  border-radius: 4px;
+  width: 25px !important;
+  height: 35px !important;
+  padding: 10px 5px !important;
+  border: 0 !important;
+  background: transparent !important;
+  border-radius: 4px !important;
+  box-shadow: none !important;
+  box-sizing: border-box !important;
+  cursor: pointer !important;
+  transition: color 120ms ease, background-color 120ms ease !important;
 }
 
 .kanboard-markdown-editor .vditor-toolbar__item--fullscreen-btn button:hover {
-  color: var(--ink-strong);
-  background-color: rgba(0, 0, 0, 0.08);
+  color: var(--ink-strong) !important;
+  background-color: rgba(0, 0, 0, 0.06) !important;
+}
+
+.kanboard-markdown-editor .vditor-toolbar__item--fullscreen-btn svg,
+.kanboard-markdown-editor .vditor-toolbar__item--fullscreen-btn svg.lucide {
+  width: 15px !important;
+  height: 15px !important;
+  min-width: 15px !important;
+  min-height: 15px !important;
+  max-width: 15px !important;
+  max-height: 15px !important;
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 1.8 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+  display: inline-block !important;
+}
+
+/* Tooltip: Ensure tooltips display downward into editor and are never clipped by boundaries */
+.kanboard-markdown-editor .vditor-toolbar .vditor-tooltipped__n::after,
+.kanboard-markdown-editor .vditor-toolbar .vditor-tooltipped__nw::after,
+.kanboard-markdown-editor .vditor-toolbar .vditor-tooltipped__ne::after,
+.kanboard-markdown-editor .vditor-toolbar .vditor-tooltipped::after {
+  top: 100% !important;
+  bottom: auto !important;
+  margin-top: 6px !important;
+  margin-bottom: 0 !important;
+  z-index: 1000000 !important;
+}
+
+.kanboard-markdown-editor .vditor-toolbar .vditor-tooltipped__n::before,
+.kanboard-markdown-editor .vditor-toolbar .vditor-tooltipped__nw::before,
+.kanboard-markdown-editor .vditor-toolbar .vditor-tooltipped__ne::before,
+.kanboard-markdown-editor .vditor-toolbar .vditor-tooltipped::before {
+  top: auto !important;
+  bottom: -6px !important;
+  border-top-color: transparent !important;
+  border-bottom-color: #3b3e43 !important;
+  z-index: 1000001 !important;
 }
 
 .kanboard-markdown-editor .vditor-content {
@@ -919,6 +971,8 @@ kbd {
   display: flex !important;
   flex-direction: column !important;
   background-color: #fffefa;
+  overflow: hidden !important;
+  border-radius: 0 0 6px 6px;
 }
 
 .kanboard-markdown-editor .vditor-ir {
@@ -1169,12 +1223,14 @@ kbd {
   border-radius: 8px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
   background: #ffffff;
+  overflow: visible !important;
 }
 
 .markdown-fullscreen-modal__body .vditor-content {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
+  border-radius: 0 0 8px 8px;
 }
 
 .markdown-fullscreen-modal__body .vditor-ir {
@@ -1206,8 +1262,7 @@ kbd {
 .field--verification-notes .kanboard-markdown-editor { flex: 1 1 auto; height: 100% !important; min-height: 0; }
 
 .field-header-actions { display: flex; align-items: center; gap: 8px; }
-.fullscreen-toggle-btn { background: var(--paper); border: 1px solid var(--line-soft); border-radius: 4px; padding: 2px 8px; font-size: 12px; color: var(--muted); cursor: pointer; transition: all 120ms ease; }
-.fullscreen-toggle-btn:hover { color: var(--ink); border-color: #959e99; }
+.fullscreen-toggle-btn { background: transparent; border: 0; padding: 0; font-size: 12px; color: var(--muted); cursor: pointer; }
 .verification-view-toggle { display: inline-flex; border: 1px solid var(--line-soft); border-radius: 4px; overflow: hidden; background: var(--paper); }
 .view-toggle-btn { background: transparent; border: none; padding: 2px 10px; font-size: 12px; color: var(--muted); cursor: pointer; transition: all 120ms ease; }
 .view-toggle-btn:hover:not(:disabled) { color: var(--ink); }
