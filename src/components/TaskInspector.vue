@@ -285,16 +285,6 @@ async function handleTabKeydown(event: KeyboardEvent) {
         <div class="field field--description">
           <div class="field-header">
             <span>任务说明</span>
-            <div class="field-header-actions">
-              <button
-                type="button"
-                class="fullscreen-toggle-btn"
-                title="全屏编辑与预览 (Esc 退出)"
-                @click="openFullscreenDescription"
-              >
-                全屏
-              </button>
-            </div>
           </div>
 
           <MarkdownEditor
@@ -303,7 +293,8 @@ async function handleTabKeydown(event: KeyboardEvent) {
             placeholder="记录背景、下一步或需要注意的信息（支持所见即所得 Markdown、表格、图片上传、Ctrl+V 粘贴与全屏编辑）"
             :task-title="draft.title"
             :data-inspector-description="true"
-            height="240px"
+            height="100%"
+            @toggle-fullscreen="openFullscreenDescription"
           />
         </div>
       </section>
@@ -333,16 +324,6 @@ async function handleTabKeydown(event: KeyboardEvent) {
         <div class="field field--verification-notes">
           <div class="field-header">
             <span>验证方案说明</span>
-            <div class="field-header-actions">
-              <button
-                type="button"
-                class="fullscreen-toggle-btn"
-                title="全屏编辑与预览 (Esc 退出)"
-                @click="openFullscreenVerification"
-              >
-                全屏
-              </button>
-            </div>
           </div>
 
           <MarkdownEditor
@@ -364,7 +345,8 @@ async function handleTabKeydown(event: KeyboardEvent) {
 | 自动化单测 | `npm test` | 通过全部测试 |"
             :task-title="draft.title"
             :data-inspector-review-notes="true"
-            height="320px"
+            height="100%"
+            @toggle-fullscreen="openFullscreenVerification"
           />
         </div>
       </section>
@@ -420,6 +402,7 @@ async function handleTabKeydown(event: KeyboardEvent) {
             :task-title="draft.title"
             :fullscreen="true"
             height="100%"
+            @toggle-fullscreen="closeFullscreen"
           />
           <MarkdownEditor
             v-else
@@ -429,6 +412,7 @@ async function handleTabKeydown(event: KeyboardEvent) {
             :task-title="draft.title"
             :fullscreen="true"
             height="100%"
+            @toggle-fullscreen="closeFullscreen"
           />
         </main>
       </div>

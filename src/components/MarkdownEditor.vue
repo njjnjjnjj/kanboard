@@ -22,7 +22,7 @@ const props = withDefaults(
     taskTitle: "",
     dataInspectorDescription: false,
     dataInspectorReviewNotes: false,
-    height: 280,
+    height: "100%",
     minHeight: 180,
     fullscreen: false,
   },
@@ -30,6 +30,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   "update:modelValue": [value: string];
+  "toggleFullscreen": [];
 }>();
 
 const editorEl = ref<HTMLDivElement | null>(null);
@@ -142,6 +143,18 @@ onMounted(() => {
         "|",
         "undo",
         "redo",
+        {
+          name: "fullscreen-custom",
+          tip: props.fullscreen ? "退出全屏 (Esc)" : "全屏编辑 (Esc 退出)",
+          tipPosition: "nw",
+          className: "vditor-toolbar__item--fullscreen-btn fullscreen-toggle-btn",
+          icon: props.fullscreen
+            ? '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7"/></svg>'
+            : '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>',
+          click() {
+            emit("toggleFullscreen");
+          },
+        },
       ],
       upload: {
         accept: "image/*",
@@ -162,6 +175,17 @@ onMounted(() => {
       after() {
         isReady.value = true;
         nextTick(resolveLocalImages);
+        if (editorEl.value) {
+          const fsContainer = editorEl.value.querySelector(".vditor-toolbar__item--fullscreen-btn");
+          const fsBtn = fsContainer?.querySelector("button");
+          if (fsContainer && fsBtn) {
+            fsContainer.addEventListener("click", (e) => {
+              if (e.target !== fsBtn && !fsBtn.contains(e.target as Node)) {
+                fsBtn.click();
+              }
+            });
+          }
+        }
       },
     });
   } catch (err) {
@@ -211,6 +235,13 @@ onBeforeUnmount(() => {
       class="sr-only-sync-textarea"
       :value="modelValue"
       @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
+    />
+    <button
+      type="button"
+      class="sr-only-sync-btn fullscreen-toggle-btn"
+      tabindex="-1"
+      aria-label="全屏切换"
+      @click="emit('toggleFullscreen')"
     />
 
     <div ref="editorEl" class="kanboard-vditor-instance" />
