@@ -93,6 +93,11 @@ function openFullscreenVerification() {
 }
 
 function closeFullscreen() {
+  if (fullscreenTarget.value === "description") {
+    isEditingDescription.value = fullscreenViewMode.value !== "preview";
+  } else if (fullscreenTarget.value === "verification") {
+    isEditingVerification.value = fullscreenViewMode.value !== "preview";
+  }
   fullscreenTarget.value = null;
 }
 
@@ -542,6 +547,7 @@ async function handleTabKeydown(event: KeyboardEvent) {
           >
             <MarkdownEditor
               v-if="fullscreenTarget === 'description'"
+              :key="'desc-edit'"
               v-model="draft.description"
               label="任务说明"
               :task-title="draft.title"
@@ -550,6 +556,7 @@ async function handleTabKeydown(event: KeyboardEvent) {
             />
             <MarkdownEditor
               v-else
+              :key="'verify-edit'"
               v-model="draft.reviewNotes"
               label="验证方案"
               :task-title="draft.title"
@@ -563,6 +570,7 @@ async function handleTabKeydown(event: KeyboardEvent) {
           >
             <MarkdownEditor
               v-if="fullscreenTarget === 'description'"
+              :key="'desc-split'"
               v-model="draft.description"
               label="任务说明"
               :task-title="draft.title"
@@ -571,6 +579,7 @@ async function handleTabKeydown(event: KeyboardEvent) {
             />
             <MarkdownEditor
               v-else
+              :key="'verify-split'"
               v-model="draft.reviewNotes"
               label="验证方案"
               :task-title="draft.title"
