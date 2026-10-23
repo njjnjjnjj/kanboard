@@ -2,10 +2,10 @@
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import DateInput from "./DateInput.vue";
 import MarkdownEditor from "./MarkdownEditor.vue";
+import MarkdownPreview from "./MarkdownPreview.vue";
 import TagInput from "./TagInput.vue";
 import TaskChecklist from "./TaskChecklist.vue";
 import TaskSelect from "./TaskSelect.vue";
-import { renderMarkdown } from "../utils/markdownRenderer";
 import type { BlockedReason, Project, Tag, Task, TaskChanges, TaskColumn } from "../types";
 
 const props = defineProps<{
@@ -74,14 +74,6 @@ const draft = reactive<TaskChanges>({
   reviewNotes: "",
 });
 
-const renderedVerificationNotes = computed(() => {
-  return renderMarkdown(draft.reviewNotes || "");
-});
-
-const renderedDescription = computed(() => {
-  return renderMarkdown(draft.description || "");
-});
-
 function openFullscreenDescription() {
   fullscreenTarget.value = "description";
   fullscreenViewMode.value = isEditingDescription.value ? "edit" : "preview";
@@ -104,20 +96,22 @@ function closeFullscreen() {
 function handleFullscreenEsc(e: KeyboardEvent) {
   if (e.key === "Escape" && fullscreenTarget.value) {
     e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
     closeFullscreen();
   }
 }
 
 watch(fullscreenTarget, (val) => {
   if (val) {
-    window.addEventListener("keydown", handleFullscreenEsc);
+    window.addEventListener("keydown", handleFullscreenEsc, { capture: true });
   } else {
-    window.removeEventListener("keydown", handleFullscreenEsc);
+    window.removeEventListener("keydown", handleFullscreenEsc, { capture: true });
   }
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener("keydown", handleFullscreenEsc);
+  window.removeEventListener("keydown", handleFullscreenEsc, { capture: true });
 });
 
 watch(
@@ -338,8 +332,9 @@ async function handleTabKeydown(event: KeyboardEvent) {
           <div
             v-if="!isEditingDescription && draft.description.trim()"
             class="description-preview markdown-body"
-            v-html="renderedDescription"
-          />
+          >
+            <MarkdownPreview :model-value="draft.description" />
+          </div>
           <div
             v-else-if="!isEditingDescription && !draft.description.trim()"
             class="verification-empty description-empty"
@@ -426,8 +421,9 @@ async function handleTabKeydown(event: KeyboardEvent) {
             v-if="!isEditingVerification && draft.reviewNotes.trim()"
             class="verification-preview markdown-body"
             data-inspector-review-preview
-            v-html="renderedVerificationNotes"
-          />
+          >
+            <MarkdownPreview :model-value="draft.reviewNotes" />
+          </div>
           <div
             v-else-if="!isEditingVerification && !draft.reviewNotes.trim()"
             class="verification-empty"
@@ -539,8 +535,11 @@ async function handleTabKeydown(event: KeyboardEvent) {
           <div
             v-if="fullscreenViewMode === 'preview'"
             class="markdown-fullscreen-modal__preview markdown-body"
-            v-html="fullscreenTarget === 'description' ? renderedDescription : renderedVerificationNotes"
-          />
+          >
+            <MarkdownPreview
+              :model-value="fullscreenTarget === 'description' ? draft.description : draft.reviewNotes"
+            />
+          </div>
           <div
             v-else-if="fullscreenViewMode === 'edit'"
             class="markdown-fullscreen-modal__editor"

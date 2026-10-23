@@ -924,6 +924,37 @@ kbd {
   border: 0;
 }
 
+/* Unified Markdown Preview via md-editor-v3 */
+.kanboard-markdown-preview {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.kanboard-markdown-preview .md-editor-previewOnly {
+  background: transparent !important;
+  border: none !important;
+  height: auto !important;
+}
+
+.kanboard-markdown-preview .md-editor-preview {
+  padding: 0 !important;
+  background: transparent !important;
+  font-family: inherit !important;
+  color: var(--ink) !important;
+}
+
+.description-preview .kanboard-markdown-preview .md-editor-preview,
+.verification-preview .kanboard-markdown-preview .md-editor-preview {
+  font-size: 13px !important;
+  line-height: 1.7 !important;
+}
+
+.markdown-fullscreen-modal__preview .kanboard-markdown-preview .md-editor-preview {
+  font-size: 14px !important;
+  line-height: 1.8 !important;
+}
+
 /* Description preview & empty states matching verification notes */
 .description-preview {
   flex: 1 1 auto;

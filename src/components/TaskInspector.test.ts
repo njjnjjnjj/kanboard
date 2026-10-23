@@ -71,7 +71,7 @@ describe("TaskInspector verification tab", () => {
     // Verification preview is rendered with markdown elements
     const preview = wrapper.find(".verification-preview");
     expect(preview.exists()).toBe(true);
-    expect(preview.html()).toContain("<h3>1. 核心改动与实现方案</h3>");
+    expect(preview.find("h3").text()).toBe("1. 核心改动与实现方案");
     expect(preview.find("table").exists()).toBe(true);
     expect(preview.find("th").text()).toBe("模块");
     expect(preview.html()).toContain("增加表格渲染");
@@ -146,5 +146,30 @@ describe("TaskInspector verification tab", () => {
     // Clicking "编写验证方案" in empty state switches to edit mode
     await wrapper.find(".verification-empty button").trigger("click");
     expect(wrapper.find("textarea[data-inspector-review-notes]").exists()).toBe(true);
+  });
+
+  it("opens fullscreen and pressing Esc only exits fullscreen without closing inspector", async () => {
+    const wrapper = mount(TaskInspector, {
+      props: {
+        task: mockTask,
+        columns,
+        projects: [],
+        tags: [],
+        saving: false,
+      },
+      attachTo: document.body,
+    });
+
+    const fullscreenBtn = wrapper.find(".fullscreen-toggle-btn");
+    await fullscreenBtn.trigger("click");
+    expect(document.querySelector(".markdown-fullscreen-modal")).toBeTruthy();
+
+    const escEvent = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    window.dispatchEvent(escEvent);
+    await wrapper.vm.$nextTick();
+
+    expect(document.querySelector(".markdown-fullscreen-modal")).toBeFalsy();
+    expect(wrapper.emitted("close")).toBeFalsy();
+    wrapper.unmount();
   });
 });

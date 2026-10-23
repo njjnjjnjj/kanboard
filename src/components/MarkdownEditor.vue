@@ -1,27 +1,9 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { config, MdEditor, type ToolbarNames } from "md-editor-v3";
+import { MdEditor, type ToolbarNames } from "md-editor-v3";
 import "md-editor-v3/lib/style.css";
-import { saveImageAttachment, resolveImageSrc } from "../services/attachmentService";
-
-config({
-  markdownItConfig(md: any) {
-    const defaultImageRule =
-      md.renderer.rules.image ||
-      function (tokens: any[], idx: number, options: any, _env: any, self: any) {
-        return self.renderToken(tokens, idx, options);
-      };
-
-    md.renderer.rules.image = function (tokens: any[], idx: number, options: any, env: any, self: any) {
-      const token = tokens[idx];
-      const srcIndex = token.attrIndex("src");
-      if (srcIndex >= 0 && token.attrs) {
-        token.attrs[srcIndex][1] = resolveImageSrc(token.attrs[srcIndex][1]);
-      }
-      return defaultImageRule(tokens, idx, options, env, self);
-    };
-  },
-});
+import { saveImageAttachment } from "../services/attachmentService";
+import "../utils/markdownConfig";
 
 const defaultToolbars: ToolbarNames[] = [
   "bold",

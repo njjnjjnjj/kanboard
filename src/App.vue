@@ -667,6 +667,9 @@ function handleGlobalKeydown(event: KeyboardEvent) {
     return;
   }
   if (event.key === "Escape") {
+    if (document.querySelector(".markdown-fullscreen-modal")) {
+      return;
+    }
     if (selectedTaskId.value) closeTask();
     else quickInput.value?.focus();
     return;
