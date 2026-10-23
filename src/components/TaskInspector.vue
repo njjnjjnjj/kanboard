@@ -398,7 +398,9 @@ async function handleTabKeydown(event: KeyboardEvent) {
               title="按 Esc 键或点击退出全屏"
               @click="closeFullscreen"
             >
-              按 <kbd>Esc</kbd> 退出
+              <span>按</span>
+              <kbd>Esc</kbd>
+              <span>退出</span>
             </button>
           </div>
         </header>

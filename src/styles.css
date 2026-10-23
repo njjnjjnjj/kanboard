@@ -903,6 +903,12 @@ kbd {
   align-items: center !important;
 }
 
+/* Hide contract/fullscreen button on Vditor toolbar in fullscreen modal */
+.markdown-fullscreen-modal .vditor-toolbar__item--fullscreen-btn,
+.kanboard-markdown-editor--fullscreen .vditor-toolbar__item--fullscreen-btn {
+  display: none !important;
+}
+
 .kanboard-markdown-editor .vditor-toolbar__item--fullscreen-btn button {
   color: var(--muted) !important;
   display: flex !important;
@@ -1177,27 +1183,36 @@ kbd {
   padding-bottom: 14px;
   margin-bottom: 14px;
   border-bottom: 1px solid var(--line-soft);
+  min-height: 28px;
+  box-sizing: border-box;
 }
 
 .markdown-fullscreen-modal__title {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 12px;
+  line-height: 1;
 }
 
 .markdown-fullscreen-modal__title strong {
-  font-size: 17px;
+  font-size: 16px;
   color: var(--ink-strong);
   font-weight: 680;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
 }
 
 .markdown-fullscreen-modal__task {
-  font-size: 14px;
+  font-size: 13.5px;
   color: var(--muted);
   max-width: 500px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
 }
 
 .markdown-fullscreen-modal__info {
@@ -1205,12 +1220,23 @@ kbd {
   align-items: center;
   gap: 8px;
   font-size: 13px;
+  line-height: 1;
   color: var(--muted);
 }
 
+.markdown-fullscreen-modal__info .info-stat {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+
 .markdown-fullscreen-modal__info .info-sep {
+  display: inline-flex;
+  align-items: center;
   color: var(--line-soft);
   font-size: 12px;
+  line-height: 1;
+  user-select: none;
 }
 
 .markdown-fullscreen-modal__info .info-esc-btn {
@@ -1218,32 +1244,43 @@ kbd {
   align-items: center;
   gap: 4px;
   background: transparent;
-  border: 1px solid var(--line-soft);
-  border-radius: 4px;
-  padding: 2px 8px;
-  font-size: 12px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
   color: var(--muted);
   cursor: pointer;
-  transition: all 120ms ease;
+  transition: color 120ms ease;
 }
 
 .markdown-fullscreen-modal__info .info-esc-btn:hover {
   color: var(--ink-strong);
-  border-color: #959e99;
-  background-color: rgba(0, 0, 0, 0.04);
+}
+
+.markdown-fullscreen-modal__info .info-esc-btn span {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
 }
 
 .markdown-fullscreen-modal__info .info-esc-btn kbd {
-  display: inline-block;
-  padding: 1px 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  padding: 0 5px;
   font-size: 11px;
   font-family: inherit;
-  line-height: 1.2;
+  line-height: 18px;
   color: var(--ink);
   background-color: #ffffff;
   border: 1px solid var(--line-soft);
   border-radius: 3px;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08);
+  box-sizing: border-box;
+  vertical-align: middle;
 }
 
 .markdown-fullscreen-modal__body {

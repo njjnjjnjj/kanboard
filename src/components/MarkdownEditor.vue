@@ -160,16 +160,20 @@ onMounted(() => {
         "|",
         "undo",
         "redo",
-        {
-          name: "fullscreen-custom",
-          tip: props.fullscreen ? "退出全屏 (Esc)" : "全屏编辑 (Esc 退出)",
-          tipPosition: "s",
-          className: "vditor-toolbar__item--fullscreen-btn",
-          icon: getLucideIconHtml(props.fullscreen ? Minimize2 : Maximize2),
-          click() {
-            emit("toggleFullscreen");
-          },
-        },
+        ...(props.fullscreen
+          ? []
+          : [
+              {
+                name: "fullscreen-custom",
+                tip: "全屏编辑 (Esc 退出)",
+                tipPosition: "s",
+                className: "vditor-toolbar__item--fullscreen-btn",
+                icon: getLucideIconHtml(Maximize2),
+                click() {
+                  emit("toggleFullscreen");
+                },
+              },
+            ]),
       ],
       upload: {
         accept: "image/*",
