@@ -506,6 +506,57 @@ struct EventData {
     created_at: String,
 }
 
+pub(crate) fn status_display_name(status: &str) -> &'static str {
+    match status {
+        "todo" => "收集箱",
+        "backlog" => "待办池",
+        "ready" => "就绪",
+        "doing" => "进行中",
+        "verify" => "待验证",
+        "blocked" => "阻塞",
+        "done" => "已完成",
+        _ => "未知状态",
+    }
+}
+
+pub(crate) fn format_transition_notification(
+    title: &str,
+    from_status: Option<&str>,
+    to_status: &str,
+    detail: Option<&str>,
+) -> (String, String) {
+    let summary = "任务状态流转通知".to_string();
+    let to_name = status_display_name(to_status);
+
+    let body = match to_status {
+        "verify" => format!(
+            "任务「{title}」已进入「待验证」状态，验证方案已就绪。点击展开任务详情并验收。"
+        ),
+        "blocked" => {
+            if let Some(detail_text) = detail.map(str::trim).filter(|d| !d.is_empty()) {
+                format!(
+                    "任务「{title}」已进入「阻塞」状态。卡点：{detail_text}。点击展开任务详情。"
+                )
+            } else {
+                format!("任务「{title}」已进入「阻塞」状态。点击展开任务详情处理卡点。")
+            }
+        }
+        "doing" => {
+            format!("任务「{title}」已进入「进行中」状态，Agent 正在处理。点击展开任务详情。")
+        }
+        _ => {
+            if let Some(from) = from_status {
+                let from_name = status_display_name(from);
+                format!("任务「{title}」已从「{from_name}」流转至「{to_name}」。点击展开任务详情。")
+            } else {
+                format!("任务「{title}」已流转至「{to_name}」。点击展开任务详情。")
+            }
+        }
+    };
+
+    (summary, body)
+}
+
 impl KanboardMcp {
     fn new(database_path: Arc<Mutex<PathBuf>>, app: Option<AppHandle>) -> Self {
         Self { database_path, app }
@@ -528,6 +579,71 @@ impl KanboardMcp {
                     "detail": detail
                 }),
             );
+        }
+    }
+
+    fn notify_status_transition(
+        &self,
+        task_id: &str,
+        title: &str,
+        from_status: Option<&str>,
+        to_status: &str,
+        detail: Option<&str>,
+    ) {
+        if let Some(app) = &self.app {
+            let (summary, body) = format_transition_notification(title, from_status, to_status, detail);
+
+            let _ = app.emit(
+                "mcp:status-transition",
+                json!({
+                    "taskId": task_id,
+                    "title": title,
+                    "fromStatus": from_status,
+                    "toStatus": to_status,
+                    "detail": detail,
+                    "summary": summary,
+                    "body": body,
+                }),
+            );
+
+            #[cfg(desktop)]
+            {
+                let app_handle = app.clone();
+                let task_id_owned = task_id.to_string();
+                let summary_owned = summary;
+                let body_owned = body;
+
+                std::thread::spawn(move || {
+                    #[cfg(windows)]
+                    {
+                        if let Err(error) = crate::windows_notify::send_windows_toast(
+                            &task_id_owned,
+                            &summary_owned,
+                            &body_owned,
+                            Some(app_handle),
+                        ) {
+                            eprintln!("failed to send windows toast: {error}");
+                        }
+                    }
+
+                    #[cfg(not(windows))]
+                    {
+                        let mut notification = notify_rust::Notification::new();
+                        notification.summary(&summary_owned).body(&body_owned);
+
+                        if let Ok(handle) = notification.show() {
+                            let _ = handle.wait_for_response(move |response: &notify_rust::NotificationResponse| match response {
+                                notify_rust::NotificationResponse::Default
+                                | notify_rust::NotificationResponse::Action(_) => {
+                                    crate::show_main_window(&app_handle);
+                                    let _ = app_handle.emit("open-task", &task_id_owned);
+                                }
+                                _ => {}
+                            });
+                        }
+                    }
+                });
+            }
         }
     }
 }
@@ -805,7 +921,8 @@ impl KanboardMcp {
         .await
         .map_err(mcp_error)?;
 
-        if task.column_id != input.status {
+        let status_changed = task.column_id != input.status;
+        if status_changed {
             sqlx::query(
                 "INSERT INTO task_events (task_id, from_status, to_status, created_at) VALUES (?, ?, ?, ?)"
             )
@@ -822,6 +939,20 @@ impl KanboardMcp {
         pool.close().await;
 
         self.emit_task_updated();
+        if status_changed {
+            let detail = if is_blocked {
+                input.comment.as_deref().or(blocked_reason.as_deref())
+            } else {
+                input.comment.as_deref()
+            };
+            self.notify_status_transition(
+                &input.task_id,
+                &task.title,
+                Some(&task.column_id),
+                &input.status,
+                detail,
+            );
+        }
         if is_blocked {
             let reason_str = blocked_reason.as_deref().unwrap_or("other");
             let detail_str = input.comment.as_deref().unwrap_or("已移动到阻塞");
@@ -861,7 +992,8 @@ impl KanboardMcp {
         .await
         .map_err(mcp_error)?;
 
-        if task.column_id != "verify" {
+        let status_changed = task.column_id != "verify";
+        if status_changed {
             sqlx::query(
                 "INSERT INTO task_events (task_id, from_status, to_status, created_at) VALUES (?, ?, 'verify', ?)"
             )
@@ -877,6 +1009,13 @@ impl KanboardMcp {
         pool.close().await;
 
         self.emit_task_updated();
+        self.notify_status_transition(
+            &input.task_id,
+            &task.title,
+            Some(&task.column_id),
+            "verify",
+            Some("验证方案已就绪"),
+        );
         structured(json!({ "task": updated_task, "verifiedPending": true }))
     }
 
@@ -924,7 +1063,8 @@ impl KanboardMcp {
         .await
         .map_err(mcp_error)?;
 
-        if task.column_id != "blocked" {
+        let status_changed = task.column_id != "blocked";
+        if status_changed {
             sqlx::query(
                 "INSERT INTO task_events (task_id, from_status, to_status, created_at) VALUES (?, ?, 'blocked', ?)"
             )
@@ -940,6 +1080,13 @@ impl KanboardMcp {
         pool.close().await;
 
         self.emit_task_updated();
+        self.notify_status_transition(
+            &input.task_id,
+            &task.title,
+            Some(&task.column_id),
+            "blocked",
+            Some(detail),
+        );
         self.emit_task_blocked(&input.task_id, &task.title, &reason, detail);
 
         structured(json!({ "task": updated_task, "blocked": true }))
@@ -1332,6 +1479,22 @@ mod tests {
     };
     use sqlx::migrate::Migrator;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn test_format_transition_notification() {
+        let (summary, body) = format_transition_notification("建立通知机制", Some("doing"), "verify", None);
+        assert_eq!(summary, "任务状态流转通知");
+        assert_eq!(body, "任务「建立通知机制」已进入「待验证」状态，验证方案已就绪。点击展开任务详情并验收。");
+
+        let (_, body_blocked) = format_transition_notification("建立通知机制", Some("doing"), "blocked", Some("卡点说明"));
+        assert_eq!(body_blocked, "任务「建立通知机制」已进入「阻塞」状态。卡点：卡点说明。点击展开任务详情。");
+
+        let (_, body_doing) = format_transition_notification("建立通知机制", Some("ready"), "doing", None);
+        assert_eq!(body_doing, "任务「建立通知机制」已进入「进行中」状态，Agent 正在处理。点击展开任务详情。");
+
+        let (_, body_other) = format_transition_notification("建立通知机制", Some("todo"), "backlog", None);
+        assert_eq!(body_other, "任务「建立通知机制」已从「收集箱」流转至「待办池」。点击展开任务详情。");
+    }
 
     #[tokio::test]
     async fn streamable_http_lists_and_calls_read_tools() {

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { invoke } from "@tauri-apps/api/core";
 import { listen, type Event, type UnlistenFn } from "@tauri-apps/api/event";
+import { onAction } from "@tauri-apps/plugin-notification";
 import BoardColumn from "./components/BoardColumn.vue";
 import FlowDashboard from "./components/FlowDashboard.vue";
 import ProjectEditor from "./components/ProjectEditor.vue";
@@ -64,6 +66,9 @@ let statusTimer: number | undefined;
 let unlistenTaskCreated: UnlistenFn | undefined;
 let unlistenMcpTaskUpdated: UnlistenFn | undefined;
 let unlistenMcpTaskBlocked: UnlistenFn | undefined;
+let unlistenOpenTask: UnlistenFn | undefined;
+let unlistenMcpStatusTransition: UnlistenFn | undefined;
+let notificationActionListener: { unregister(): Promise<void> } | (() => void) | undefined;
 let undoTimer: number | undefined;
 
 const selectedTask = computed(() => {
@@ -150,29 +155,35 @@ function announce(message: string) {
   }, 2200);
 }
 
+let loadPromise: Promise<void> | null = null;
 async function load() {
-  loading.value = true;
-  errorMessage.value = "";
-  try {
-    const [taskWall, projectList, tagList, events, trashedTasks] = await Promise.all([
-      loadTaskWall(),
-      loadProjects(),
-      loadTags(),
-      loadTaskEvents(),
-      loadDeletedTasks(),
-    ]);
-    columns.value = taskWall;
-    projects.value = projectList;
-    tags.value = tagList;
-    taskEvents.value = events;
-    deletedTasks.value = trashedTasks;
-    if (selectedTaskId.value && !selectedTask.value) selectedTaskId.value = null;
-  } catch (error) {
-    console.error(error);
-    errorMessage.value = "无法打开本地数据库。请关闭应用后重新启动。";
-  } finally {
-    loading.value = false;
-  }
+  if (loadPromise) return loadPromise;
+  loadPromise = (async () => {
+    loading.value = true;
+    errorMessage.value = "";
+    try {
+      const [taskWall, projectList, tagList, events, trashedTasks] = await Promise.all([
+        loadTaskWall(),
+        loadProjects(),
+        loadTags(),
+        loadTaskEvents(),
+        loadDeletedTasks(),
+      ]);
+      columns.value = taskWall;
+      projects.value = projectList;
+      tags.value = tagList;
+      taskEvents.value = events;
+      deletedTasks.value = trashedTasks;
+      if (selectedTaskId.value && !selectedTask.value) selectedTaskId.value = null;
+    } catch (error) {
+      console.error(error);
+      errorMessage.value = "无法打开本地数据库。请关闭应用后重新启动。";
+    } finally {
+      loading.value = false;
+      loadPromise = null;
+    }
+  })();
+  return loadPromise;
 }
 
 async function addTask() {
@@ -555,6 +566,32 @@ function isVisibleTask(task: Task) {
 }
 
 async function openTask(taskId: string) {
+  dashboardOpen.value = false;
+  settingsOpen.value = false;
+  projectEditorOpen.value = false;
+
+  const targetTask = allTasks.value.find((item) => item.id === taskId);
+  if (targetTask) {
+    if (searchQuery.value && !matchesFilters(targetTask)) {
+      searchQuery.value = "";
+    }
+    if (filterMode.value !== "all" && !matchesFilters(targetTask)) {
+      filterMode.value = "all";
+    }
+    if (scope.value.kind === "trash") {
+      scope.value = { kind: "all" };
+    } else if (!matchesScope(targetTask)) {
+      if (targetTask.projectId) {
+        scope.value = { kind: "project", id: targetTask.projectId };
+      } else {
+        scope.value = { kind: "all" };
+      }
+    }
+  }
+  if (selectedTaskId.value === taskId) {
+    selectedTaskId.value = null;
+    await nextTick();
+  }
   selectedTaskId.value = taskId;
   await nextTick();
   document.querySelector<HTMLTextAreaElement>("[data-inspector-title]")?.focus();
@@ -669,7 +706,52 @@ onMounted(async () => {
       await load();
     },
   );
+  unlistenOpenTask = await listen<string>("open-task", async (event) => {
+    if (event.payload) {
+      await load();
+      await openTask(event.payload);
+    }
+  });
+  unlistenMcpStatusTransition = await listen<{
+    taskId: string;
+    title: string;
+    fromStatus: string | null;
+    toStatus: string;
+    detail?: string;
+  }>("mcp:status-transition", async (event) => {
+    await load();
+    const statusMap: Record<string, string> = {
+      todo: "收集箱",
+      backlog: "待办池",
+      ready: "就绪",
+      doing: "进行中",
+      verify: "待验证",
+      blocked: "阻塞",
+      done: "已完成",
+    };
+    const targetName = statusMap[event.payload.toStatus] || "新状态";
+    announce(`任务【${event.payload.title}】状态已流转至${targetName}`);
+  });
+  try {
+    notificationActionListener = await onAction(async (action) => {
+      const taskId = (action.notification?.extra?.taskId as string) || undefined;
+      if (taskId) {
+        await load();
+        await openTask(taskId);
+      }
+    });
+  } catch {
+    // onAction may not be available in non-desktop environments or testing
+  }
   await load();
+  try {
+    const pendingTaskId = await invoke<string | null>("get_pending_open_task");
+    if (pendingTaskId) {
+      await openTask(pendingTaskId);
+    }
+  } catch {
+    // Non-fatal if invoke is unavailable
+  }
   await nextTick();
   const splash = document.querySelector<HTMLElement>("#startup-splash");
   if (splash) {
@@ -690,6 +772,13 @@ onBeforeUnmount(() => {
   unlistenTaskCreated?.();
   unlistenMcpTaskUpdated?.();
   unlistenMcpTaskBlocked?.();
+  unlistenOpenTask?.();
+  unlistenMcpStatusTransition?.();
+  if (typeof notificationActionListener === "function") {
+    (notificationActionListener as () => void)();
+  } else if (typeof (notificationActionListener as { unregister?: () => Promise<void> })?.unregister === "function") {
+    (notificationActionListener as { unregister: () => Promise<void> }).unregister();
+  }
   window.clearTimeout(statusTimer);
   window.clearInterval(undoTimer);
 });

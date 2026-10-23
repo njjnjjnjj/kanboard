@@ -8,6 +8,7 @@
     "core:window:allow-close",
     "sql:default",
     "sql:allow-execute",
-    "dialog:default"
+    "dialog:default",
+    "notification:default"
   ]
 }

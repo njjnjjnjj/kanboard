@@ -7,12 +7,28 @@ import type { Task, TaskColumn } from "./types";
 const taskCreatedListener = vi.hoisted(() => ({
   value: undefined as undefined | ((event: { payload: string | null }) => void | Promise<void>),
 }));
+const openTaskListener = vi.hoisted(() => ({
+  value: undefined as undefined | ((event: { payload: string }) => void | Promise<void>),
+}));
+const mcpStatusTransitionListener = vi.hoisted(() => ({
+  value: undefined as undefined | ((event: { payload: any }) => void | Promise<void>),
+}));
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async (event: string, listener: typeof taskCreatedListener.value) => {
+  listen: vi.fn(async (event: string, listener: any) => {
     if (event === "task-created") taskCreatedListener.value = listener;
+    if (event === "open-task") openTaskListener.value = listener;
+    if (event === "mcp:status-transition") mcpStatusTransitionListener.value = listener;
     return vi.fn();
   }),
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(async () => null),
+}));
+
+vi.mock("@tauri-apps/plugin-notification", () => ({
+  onAction: vi.fn(async () => ({ unregister: vi.fn() })),
 }));
 
 const repository = vi.hoisted(() => ({
@@ -72,6 +88,8 @@ describe("personal task wall", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     taskCreatedListener.value = undefined;
+    openTaskListener.value = undefined;
+    mcpStatusTransitionListener.value = undefined;
     repository.loadTaskWall.mockResolvedValue(wall());
     repository.loadProjects.mockResolvedValue([]);
     repository.loadTags.mockResolvedValue([]);
@@ -424,6 +442,55 @@ describe("personal task wall", () => {
     expect(repository.trashTask).not.toHaveBeenCalled();
     expect(wrapper.find("[data-column='todo'] [data-task-id='task-1']").exists()).toBe(true);
     expect(wrapper.find("[data-column='doing'] [data-task-id='task-1']").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("expands corresponding task panel when receiving open-task event from notification click", async () => {
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+
+    await openTaskListener.value?.({ payload: "task-1" });
+    await flushPromises();
+
+    expect(wrapper.find(".task-drawer-layer").exists()).toBe(true);
+    expect((wrapper.get("[data-inspector-title]").element as HTMLInputElement).value).toBe("整理个人任务");
+    wrapper.unmount();
+  });
+
+  it("reloads tasks and announces status update when receiving mcp:status-transition event", async () => {
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+    vi.clearAllMocks();
+
+    await mcpStatusTransitionListener.value?.({
+      payload: {
+        taskId: "task-1",
+        title: "整理个人任务",
+        fromStatus: "doing",
+        toStatus: "verify",
+      },
+    });
+    await flushPromises();
+
+    expect(repository.loadTaskWall).toHaveBeenCalledTimes(1);
+    expect(wrapper.get(".sr-status").text()).toContain("待验证");
+    wrapper.unmount();
+  });
+
+  it("re-expands task inspector and closes dashboard if open when open-task event arrives", async () => {
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+
+    // Open flow dashboard first
+    wrapper.get("[data-tour='flow-dashboard']").trigger("click");
+    await wrapper.vm.$nextTick();
+
+    // Send open-task event
+    await openTaskListener.value?.({ payload: "task-1" });
+    await flushPromises();
+
+    expect(wrapper.find(".task-drawer-layer").exists()).toBe(true);
+    expect((wrapper.get("[data-inspector-title]").element as HTMLInputElement).value).toBe("整理个人任务");
     wrapper.unmount();
   });
 });
