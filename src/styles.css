@@ -812,7 +812,7 @@ kbd {
 .field--description .field-header span { font-size: 13px; font-weight: 600; color: var(--ink-strong); }
 .field--description textarea { height: 100%; min-height: 164px; }
 
-/* Markdown Editor Styling */
+/* Markdown Editor Styling (Vditor Instant-Rendering Mode) */
 .kanboard-markdown-editor {
   display: flex;
   flex-direction: column;
@@ -823,93 +823,95 @@ kbd {
   box-sizing: border-box;
 }
 
-.kanboard-markdown-editor .md-editor {
+.kanboard-markdown-editor .vditor {
   width: 100% !important;
   max-width: 100% !important;
   min-width: 0 !important;
   box-sizing: border-box !important;
   border: 1px solid var(--line-soft);
   border-radius: 6px;
-  background: var(--surface);
-  --md-bk-color: #fffefa;
-  --md-color: var(--ink);
-  --md-border-color: var(--line-soft);
-  --md-hover-color: var(--active-border);
+  background-color: #fffefa;
   font-family: inherit;
+  overflow: hidden;
 }
 
-.kanboard-markdown-editor .md-editor:focus-within {
+.kanboard-markdown-editor .vditor:focus-within {
   border-color: var(--active-border);
   box-shadow: var(--focus-ring);
 }
 
-.kanboard-markdown-editor .md-editor-toolbar-wrapper {
-  background: #f7f7f3;
+.kanboard-markdown-editor .vditor-toolbar {
+  background-color: #f7f7f3;
   border-bottom: 1px solid var(--line-soft);
   padding: 4px 6px;
-  overflow-x: visible !important;
-  overflow-y: visible !important;
-  height: auto !important;
-  box-sizing: border-box !important;
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
 }
 
-.kanboard-markdown-editor .md-editor-toolbar {
-  display: flex !important;
-  flex-wrap: wrap !important;
-  row-gap: 4px !important;
-  height: auto !important;
-  box-sizing: border-box !important;
+.kanboard-markdown-editor .vditor-toolbar__item button {
+  color: var(--muted);
+  border-radius: 4px;
 }
 
-.kanboard-markdown-editor .md-editor-toolbar-left {
-  display: flex !important;
-  flex-wrap: wrap !important;
-  row-gap: 4px !important;
-  column-gap: 2px !important;
-  white-space: normal !important;
-  height: auto !important;
-  box-sizing: border-box !important;
+.kanboard-markdown-editor .vditor-toolbar__item button:hover {
+  color: var(--ink);
+  background-color: rgba(0, 0, 0, 0.05);
 }
 
-.kanboard-markdown-editor .md-editor-toolbar-item {
-  margin: 0 !important;
-  padding: 2px 4px !important;
-  box-sizing: border-box !important;
+.kanboard-markdown-editor .vditor-content {
+  background-color: #fffefa;
 }
 
-.kanboard-markdown-editor .md-editor-content {
-  background: #fffefa;
-  width: 100% !important;
-  max-width: 100% !important;
-  min-width: 0 !important;
-  box-sizing: border-box !important;
+.kanboard-markdown-editor .vditor-ir {
+  padding: 12px 14px;
+  background-color: #fffefa;
+  color: var(--ink);
+  font-size: 13.5px;
+  line-height: 1.7;
+  scrollbar-width: thin;
+  box-sizing: border-box;
 }
 
-.kanboard-markdown-editor .md-editor-content-wrapper,
-.kanboard-markdown-editor .md-editor-input-wrapper {
-  width: 100% !important;
-  max-width: 100% !important;
-  min-width: 0 !important;
-  box-sizing: border-box !important;
+.kanboard-markdown-editor .vditor-reset {
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13.5px;
+  line-height: 1.7;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
-.kanboard-markdown-editor .cm-editor,
-.kanboard-markdown-editor .cm-scroller {
-  width: 100% !important;
-  max-width: 100% !important;
-  min-width: 0 !important;
-  box-sizing: border-box !important;
+.kanboard-markdown-editor .vditor-reset table {
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+  margin: 10px 0;
+  border: 1px solid var(--line-soft);
 }
 
-.kanboard-markdown-editor .cm-content {
-  min-width: 0 !important;
-  word-break: break-word !important;
-  white-space: pre-wrap !important;
+.kanboard-markdown-editor .vditor-reset th,
+.kanboard-markdown-editor .vditor-reset td {
+  border: 1px solid var(--line-soft);
+  padding: 6px 10px;
 }
 
-.kanboard-markdown-editor .cm-line {
-  word-break: break-word !important;
-  overflow-wrap: break-word !important;
+.kanboard-markdown-editor .vditor-reset th {
+  background: #f7f9fa;
+  font-weight: 600;
+  color: var(--ink-strong);
+}
+
+.kanboard-markdown-editor .vditor-reset img {
+  max-width: 100%;
+  max-height: 480px;
+  object-fit: contain;
+  border-radius: 6px;
+  border: 1px solid var(--line-soft);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  margin: 8px 0;
+  display: block;
 }
 
 .sr-only-sync-textarea {
@@ -922,37 +924,6 @@ kbd {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
-}
-
-/* Unified Markdown Preview via md-editor-v3 */
-.kanboard-markdown-preview {
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-}
-
-.kanboard-markdown-preview .md-editor-previewOnly {
-  background: transparent !important;
-  border: none !important;
-  height: auto !important;
-}
-
-.kanboard-markdown-preview .md-editor-preview {
-  padding: 0 !important;
-  background: transparent !important;
-  font-family: inherit !important;
-  color: var(--ink) !important;
-}
-
-.description-preview .kanboard-markdown-preview .md-editor-preview,
-.verification-preview .kanboard-markdown-preview .md-editor-preview {
-  font-size: 13px !important;
-  line-height: 1.7 !important;
-}
-
-.markdown-fullscreen-modal__preview .kanboard-markdown-preview .md-editor-preview {
-  font-size: 14px !important;
-  line-height: 1.8 !important;
 }
 
 /* Description preview & empty states matching verification notes */
@@ -1088,40 +1059,39 @@ kbd {
   overflow: hidden;
 }
 
-.markdown-fullscreen-modal__preview {
+.markdown-fullscreen-modal__body .kanboard-markdown-editor {
   flex: 1 1 auto;
-  overflow-y: auto;
-  padding: 28px 36px;
-  background: #ffffff;
-  border: 1px solid var(--line-soft);
-  border-radius: 8px;
-  max-width: 1100px;
-  width: 100%;
-  margin: 0 auto;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
-  box-sizing: border-box;
-  line-height: 1.8;
-}
-
-.markdown-fullscreen-modal__editor {
-  flex: 1 1 auto;
+  height: 100% !important;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-  background: #ffffff;
-  border: 1px solid var(--line-soft);
-  border-radius: 8px;
   max-width: 1200px;
   width: 100%;
   margin: 0 auto;
-  overflow: hidden;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
 }
 
-.markdown-fullscreen-modal__editor .kanboard-markdown-editor,
-.markdown-fullscreen-modal__editor .kanboard-md-editor-instance {
+.markdown-fullscreen-modal__body .vditor {
   height: 100% !important;
-  border: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+  background: #ffffff;
+}
+
+.markdown-fullscreen-modal__body .vditor-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.markdown-fullscreen-modal__body .vditor-ir {
+  height: 100% !important;
+  padding: 24px 32px;
+  font-size: 14.5px;
+  line-height: 1.8;
+  max-width: 1000px;
+  margin: 0 auto;
+  box-sizing: border-box;
 }
 
 .markdown-image {

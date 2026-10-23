@@ -57,7 +57,7 @@ describe("TaskInspector verification tab", () => {
     expect(wrapper.find(".secondary-button").text()).toBe("通过验证并完成");
   });
 
-  it("renders markdown preview with tables and lists by default and allows switching to edit mode", async () => {
+  it("renders unified instant-rendering editor directly without separate preview mode", async () => {
     const wrapper = mount(TaskInspector, {
       props: {
         task: mockTask,
@@ -68,32 +68,19 @@ describe("TaskInspector verification tab", () => {
       },
     });
 
-    // Verification preview is rendered with markdown elements
-    const preview = wrapper.find(".verification-preview");
-    expect(preview.exists()).toBe(true);
-    expect(preview.find("h3").text()).toBe("1. 核心改动与实现方案");
-    expect(preview.find("table").exists()).toBe(true);
-    expect(preview.find("th").text()).toBe("模块");
-    expect(preview.html()).toContain("增加表格渲染");
-    expect(preview.html()).toContain("全部功能点已实现");
-    expect(preview.html()).toContain("language-bash");
-    expect(preview.html()).toContain("npm test");
-    expect(wrapper.find("textarea[data-inspector-review-notes]").exists()).toBe(false);
-
-    // Switch to edit mode
-    const editToggle = wrapper.findAll(".view-toggle-btn")[1];
-    expect(editToggle.text()).toBe("编辑");
-    await editToggle.trigger("click");
-
+    // Verification notes editor is directly rendered in place
     const textarea = wrapper.find("textarea[data-inspector-review-notes]");
     expect(textarea.exists()).toBe(true);
     expect((textarea.element as HTMLTextAreaElement).value).toContain("### 1. 核心改动与实现方案");
+    expect((textarea.element as HTMLTextAreaElement).value).toContain("| 模块 | 改动说明 |");
 
-    // Switch back to preview
-    const previewToggle = wrapper.findAll(".view-toggle-btn")[0];
-    await previewToggle.trigger("click");
-    expect(wrapper.find(".verification-preview").exists()).toBe(true);
-    expect(wrapper.find("textarea[data-inspector-review-notes]").exists()).toBe(false);
+    // No separate toggle pills exist anymore
+    expect(wrapper.find(".verification-view-toggle").exists()).toBe(false);
+    expect(wrapper.find(".description-view-toggle").exists()).toBe(false);
+
+    // Can directly update review notes
+    await textarea.setValue("### 1. 更新改动");
+    expect((textarea.element as HTMLTextAreaElement).value).toBe("### 1. 更新改动");
   });
 
   it("passes verification and marks task as done upon clicking the button", async () => {
@@ -140,11 +127,7 @@ describe("TaskInspector verification tab", () => {
     expect(wrapper.find("#task-verification-panel").isVisible()).toBe(true);
     // Non-verify task does not show the pass verification toolbar
     expect(wrapper.find(".task-verification__toolbar").exists()).toBe(false);
-    // Empty review notes shows the empty guide state
-    expect(wrapper.find(".verification-empty").exists()).toBe(true);
-
-    // Clicking "编写验证方案" in empty state switches to edit mode
-    await wrapper.find(".verification-empty button").trigger("click");
+    // Directly presents the editor ready to write
     expect(wrapper.find("textarea[data-inspector-review-notes]").exists()).toBe(true);
   });
 

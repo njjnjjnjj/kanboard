@@ -2,7 +2,6 @@
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import DateInput from "./DateInput.vue";
 import MarkdownEditor from "./MarkdownEditor.vue";
-import MarkdownPreview from "./MarkdownPreview.vue";
 import TagInput from "./TagInput.vue";
 import TaskChecklist from "./TaskChecklist.vue";
 import TaskSelect from "./TaskSelect.vue";
@@ -27,10 +26,7 @@ type TabType = typeof TABS[number];
 
 const confirmingDelete = ref(false);
 const activeTab = ref<TabType>("details");
-const isEditingVerification = ref(false);
-const isEditingDescription = ref(false);
 const fullscreenTarget = ref<"description" | "verification" | null>(null);
-const fullscreenViewMode = ref<"preview" | "edit" | "split">("preview");
 
 const statusOptions = computed(() =>
   props.columns.map((column) => ({ value: column.id, label: column.title })),
@@ -76,20 +72,13 @@ const draft = reactive<TaskChanges>({
 
 function openFullscreenDescription() {
   fullscreenTarget.value = "description";
-  fullscreenViewMode.value = isEditingDescription.value ? "edit" : "preview";
 }
 
 function openFullscreenVerification() {
   fullscreenTarget.value = "verification";
-  fullscreenViewMode.value = isEditingVerification.value ? "edit" : "preview";
 }
 
 function closeFullscreen() {
-  if (fullscreenTarget.value === "description") {
-    isEditingDescription.value = fullscreenViewMode.value !== "preview";
-  } else if (fullscreenTarget.value === "verification") {
-    isEditingVerification.value = fullscreenViewMode.value !== "preview";
-  }
   fullscreenTarget.value = null;
 }
 
@@ -120,8 +109,6 @@ watch(
     confirmingDelete.value = false;
     if (!previousTask || task.id !== previousTask.id) {
       activeTab.value = task.columnId === "verify" ? "verification" : "details";
-      isEditingVerification.value = false;
-      isEditingDescription.value = !task.description;
     }
     draft.title = task.title;
     draft.description = task.description;
@@ -307,55 +294,15 @@ async function handleTabKeydown(event: KeyboardEvent) {
               >
                 全屏
               </button>
-              <div class="description-view-toggle">
-                <button
-                  type="button"
-                  class="desc-toggle-btn"
-                  :class="{ 'desc-toggle-btn--active': !isEditingDescription }"
-                  :disabled="!draft.description.trim()"
-                  @click="isEditingDescription = false"
-                >
-                  预览
-                </button>
-                <button
-                  type="button"
-                  class="desc-toggle-btn"
-                  :class="{ 'desc-toggle-btn--active': isEditingDescription }"
-                  @click="isEditingDescription = true"
-                >
-                  编辑
-                </button>
-              </div>
             </div>
           </div>
 
-          <div
-            v-if="!isEditingDescription && draft.description.trim()"
-            class="description-preview markdown-body"
-          >
-            <MarkdownPreview :model-value="draft.description" />
-          </div>
-          <div
-            v-else-if="!isEditingDescription && !draft.description.trim()"
-            class="verification-empty description-empty"
-          >
-            <p>暂无任务说明。点击“编辑”编写背景、下一步或注意事项。</p>
-            <button
-              type="button"
-              class="secondary-button"
-              @click="isEditingDescription = true"
-            >
-              编写任务说明
-            </button>
-          </div>
           <MarkdownEditor
-            v-show="isEditingDescription"
             v-model="draft.description"
             label="任务说明"
-            placeholder="记录背景、下一步或需要注意的信息（支持 Markdown、表格、图片上传、Ctrl+V 粘贴与全屏编辑）"
+            placeholder="记录背景、下一步或需要注意的信息（支持所见即所得 Markdown、表格、图片上传、Ctrl+V 粘贴与全屏编辑）"
             :task-title="draft.title"
             :data-inspector-description="true"
-            :preview="false"
             height="240px"
           />
         </div>
@@ -395,50 +342,10 @@ async function handleTabKeydown(event: KeyboardEvent) {
               >
                 全屏
               </button>
-              <div class="verification-view-toggle">
-                <button
-                  type="button"
-                  class="view-toggle-btn"
-                  :class="{ 'view-toggle-btn--active': !isEditingVerification }"
-                  :disabled="!draft.reviewNotes.trim()"
-                  @click="isEditingVerification = false"
-                >
-                  预览
-                </button>
-                <button
-                  type="button"
-                  class="view-toggle-btn"
-                  :class="{ 'view-toggle-btn--active': isEditingVerification }"
-                  @click="isEditingVerification = true"
-                >
-                  编辑
-                </button>
-              </div>
             </div>
           </div>
 
-          <div
-            v-if="!isEditingVerification && draft.reviewNotes.trim()"
-            class="verification-preview markdown-body"
-            data-inspector-review-preview
-          >
-            <MarkdownPreview :model-value="draft.reviewNotes" />
-          </div>
-          <div
-            v-else-if="!isEditingVerification && !draft.reviewNotes.trim()"
-            class="verification-empty"
-          >
-            <p>暂无验证方案。Agent 在提交提测时将在此生成结构化 Markdown 交付文档，你也可以点击“编辑”手动编写。</p>
-            <button
-              type="button"
-              class="secondary-button"
-              @click="isEditingVerification = true"
-            >
-              编写验证方案
-            </button>
-          </div>
           <MarkdownEditor
-            v-else
             v-model="draft.reviewNotes"
             label="验证方案"
             placeholder="请使用结构化 Markdown 编写验证方案（优先使用表格、清单与代码块分项呈现，避免单行堆砌）：
@@ -457,7 +364,6 @@ async function handleTabKeydown(event: KeyboardEvent) {
 | 自动化单测 | `npm test` | 通过全部测试 |"
             :task-title="draft.title"
             :data-inspector-review-notes="true"
-            :preview="false"
             height="320px"
           />
         </div>
@@ -495,32 +401,6 @@ async function handleTabKeydown(event: KeyboardEvent) {
             <span v-if="draft.title" class="markdown-fullscreen-modal__task">{{ draft.title }}</span>
           </div>
           <div class="markdown-fullscreen-modal__actions">
-            <div class="verification-view-toggle">
-              <button
-                type="button"
-                class="view-toggle-btn"
-                :class="{ 'view-toggle-btn--active': fullscreenViewMode === 'preview' }"
-                @click="fullscreenViewMode = 'preview'"
-              >
-                预览
-              </button>
-              <button
-                type="button"
-                class="view-toggle-btn"
-                :class="{ 'view-toggle-btn--active': fullscreenViewMode === 'edit' }"
-                @click="fullscreenViewMode = 'edit'"
-              >
-                编辑
-              </button>
-              <button
-                type="button"
-                class="view-toggle-btn"
-                :class="{ 'view-toggle-btn--active': fullscreenViewMode === 'split' }"
-                @click="fullscreenViewMode = 'split'"
-              >
-                分屏对照
-              </button>
-            </div>
             <button
               type="button"
               class="secondary-button"
@@ -532,60 +412,24 @@ async function handleTabKeydown(event: KeyboardEvent) {
         </header>
 
         <main class="markdown-fullscreen-modal__body">
-          <div
-            v-if="fullscreenViewMode === 'preview'"
-            class="markdown-fullscreen-modal__preview markdown-body"
-          >
-            <MarkdownPreview
-              :model-value="fullscreenTarget === 'description' ? draft.description : draft.reviewNotes"
-            />
-          </div>
-          <div
-            v-else-if="fullscreenViewMode === 'edit'"
-            class="markdown-fullscreen-modal__editor"
-          >
-            <MarkdownEditor
-              v-if="fullscreenTarget === 'description'"
-              :key="'desc-edit'"
-              v-model="draft.description"
-              label="任务说明"
-              :task-title="draft.title"
-              :preview="false"
-              height="100%"
-            />
-            <MarkdownEditor
-              v-else
-              :key="'verify-edit'"
-              v-model="draft.reviewNotes"
-              label="验证方案"
-              :task-title="draft.title"
-              :preview="false"
-              height="100%"
-            />
-          </div>
-          <div
-            v-else-if="fullscreenViewMode === 'split'"
-            class="markdown-fullscreen-modal__editor markdown-fullscreen-modal__editor--split"
-          >
-            <MarkdownEditor
-              v-if="fullscreenTarget === 'description'"
-              :key="'desc-split'"
-              v-model="draft.description"
-              label="任务说明"
-              :task-title="draft.title"
-              :preview="true"
-              height="100%"
-            />
-            <MarkdownEditor
-              v-else
-              :key="'verify-split'"
-              v-model="draft.reviewNotes"
-              label="验证方案"
-              :task-title="draft.title"
-              :preview="true"
-              height="100%"
-            />
-          </div>
+          <MarkdownEditor
+            v-if="fullscreenTarget === 'description'"
+            key="desc-fullscreen"
+            v-model="draft.description"
+            label="任务说明"
+            :task-title="draft.title"
+            :fullscreen="true"
+            height="100%"
+          />
+          <MarkdownEditor
+            v-else
+            key="verify-fullscreen"
+            v-model="draft.reviewNotes"
+            label="验证方案"
+            :task-title="draft.title"
+            :fullscreen="true"
+            height="100%"
+          />
         </main>
       </div>
     </Teleport>

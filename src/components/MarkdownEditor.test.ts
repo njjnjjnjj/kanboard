@@ -1,16 +1,14 @@
 import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { clearSideEffects, MdEditor } from "md-editor-v3";
 import MarkdownEditor from "./MarkdownEditor.vue";
 import * as attachmentService from "../services/attachmentService";
 
 describe("MarkdownEditor", () => {
   afterEach(() => {
-    clearSideEffects();
     vi.restoreAllMocks();
   });
 
-  it("mounts and renders properly with open-source md-editor-v3", () => {
+  it("mounts and renders properly with open-source vditor in instant rendering mode", () => {
     const wrapper = mount(MarkdownEditor, {
       props: {
         modelValue: "## 需求说明\n\n这是一段 Markdown 说明",
@@ -19,7 +17,7 @@ describe("MarkdownEditor", () => {
     });
 
     expect(wrapper.exists()).toBe(true);
-    expect(wrapper.find(".kanboard-md-editor-instance").exists()).toBe(true);
+    expect(wrapper.find(".kanboard-vditor-instance").exists()).toBe(true);
     const syncTextarea = wrapper.find("textarea[data-inspector-description]");
     expect(syncTextarea.exists()).toBe(true);
     expect((syncTextarea.element as HTMLTextAreaElement).value).toContain("## 需求说明");
@@ -39,7 +37,7 @@ describe("MarkdownEditor", () => {
     expect(wrapper.emitted("update:modelValue")?.[0]?.[0]).toBe("更新后的内容");
   });
 
-  it("handles image upload via saveImageAttachment and inserts markdown image syntax", async () => {
+  it("handles image upload via saveImageAttachment and generates markdown image syntax", async () => {
     const spy = vi.spyOn(attachmentService, "saveImageAttachment").mockResolvedValue({
       relativePath: "attachments/2026/10/img_test.png",
       absolutePath: "D:/storage/attachments/2026/10/img_test.png",
@@ -53,25 +51,11 @@ describe("MarkdownEditor", () => {
       },
     });
 
-    const mdEditor = wrapper.findComponent(MdEditor);
-    expect(mdEditor.exists()).toBe(true);
-
     const mockFile = new File(["dummy content"], "test.png", { type: "image/png" });
-    const callback = vi.fn();
-
-    const onUploadImg = mdEditor.props("onUploadImg") as ((files: File[], cb: any) => Promise<void>) | undefined;
-    expect(typeof onUploadImg).toBe("function");
-    if (onUploadImg) {
-      await onUploadImg([mockFile], callback);
-    }
+    const vm = wrapper.vm as unknown as { handleUpload: (files: File[]) => Promise<string[]> };
+    const inserted = await vm.handleUpload([mockFile]);
 
     expect(spy).toHaveBeenCalledWith(mockFile);
-    expect(callback).toHaveBeenCalledWith([
-      {
-        url: "attachments/2026/10/img_test.png",
-        alt: "img_test",
-        title: "img_test.png",
-      },
-    ]);
+    expect(inserted).toEqual(["![img_test](attachments/2026/10/img_test.png)"]);
   });
 });
