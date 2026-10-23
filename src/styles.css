@@ -987,15 +987,23 @@ kbd {
   scrollbar-width: thin;
   box-sizing: border-box;
   overflow-y: auto !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
 }
 
-.kanboard-markdown-editor .vditor-reset {
+.kanboard-markdown-editor .vditor-reset,
+.kanboard-markdown-editor pre.vditor-reset {
   color: var(--ink);
   font-family: inherit;
   font-size: 13.5px;
   line-height: 1.7;
   word-break: break-word;
   overflow-wrap: break-word;
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
 }
 
 /* Vditor task list checkbox styling */
@@ -1157,7 +1165,7 @@ kbd {
   background: #f7f7f3;
   display: flex;
   flex-direction: column;
-  padding: 20px 32px 28px;
+  padding: 12px 18px 18px;
   overflow: hidden;
   box-sizing: border-box;
 }
@@ -1166,8 +1174,8 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-bottom: 14px;
-  margin-bottom: 14px;
+  padding: 0 4px 10px;
+  margin-bottom: 10px;
   border-bottom: 1px solid var(--line-soft);
 }
 
@@ -1186,16 +1194,56 @@ kbd {
 .markdown-fullscreen-modal__task {
   font-size: 14px;
   color: var(--muted);
-  max-width: 500px;
+  max-width: 600px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.markdown-fullscreen-modal__actions {
+.markdown-fullscreen-modal__info {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.markdown-fullscreen-modal__info .info-sep {
+  color: var(--line-soft);
+  font-size: 12px;
+}
+
+.markdown-fullscreen-modal__info .info-esc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.markdown-fullscreen-modal__info .info-esc-btn:hover {
+  color: var(--ink-strong);
+  border-color: #959e99;
+  background-color: rgba(0, 0, 0, 0.04);
+}
+
+.markdown-fullscreen-modal__info .info-esc-btn kbd {
+  display: inline-block;
+  padding: 1px 4px;
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1.2;
+  color: var(--ink);
+  background-color: #ffffff;
+  border: 1px solid var(--line-soft);
+  border-radius: 3px;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08);
 }
 
 .markdown-fullscreen-modal__body {
@@ -1210,9 +1258,9 @@ kbd {
   flex: 1 1 auto;
   height: 100% !important;
   min-height: 0;
-  max-width: 1200px;
   width: 100%;
-  margin: 0 auto;
+  max-width: 100%;
+  margin: 0;
 }
 
 .markdown-fullscreen-modal__body .vditor {
@@ -1224,6 +1272,8 @@ kbd {
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
   background: #ffffff;
   overflow: visible !important;
+  width: 100% !important;
+  max-width: 100% !important;
 }
 
 .markdown-fullscreen-modal__body .vditor-content {
@@ -1231,16 +1281,26 @@ kbd {
   min-height: 0;
   overflow: hidden;
   border-radius: 0 0 8px 8px;
+  width: 100%;
 }
 
 .markdown-fullscreen-modal__body .vditor-ir {
   height: 100% !important;
-  padding: 24px 32px;
+  padding: 16px 28px 24px 28px !important;
   font-size: 14.5px;
   line-height: 1.8;
-  max-width: 1000px;
-  margin: 0 auto;
-  box-sizing: border-box;
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.markdown-fullscreen-modal__body .vditor-reset,
+.markdown-fullscreen-modal__body pre.vditor-reset {
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
 }
 
 .markdown-image {

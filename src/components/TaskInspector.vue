@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
-import { Minimize2 } from "lucide-vue-next";
 import DateInput from "./DateInput.vue";
 import MarkdownEditor from "./MarkdownEditor.vue";
 import TagInput from "./TagInput.vue";
@@ -28,6 +27,11 @@ type TabType = typeof TABS[number];
 const confirmingDelete = ref(false);
 const activeTab = ref<TabType>("details");
 const fullscreenTarget = ref<"description" | "verification" | null>(null);
+
+const fullscreenCharCount = computed(() => {
+  const content = fullscreenTarget.value === "description" ? draft.description : draft.reviewNotes;
+  return content ? content.length : 0;
+});
 
 const statusOptions = computed(() =>
   props.columns.map((column) => ({ value: column.id, label: column.title })),
@@ -383,14 +387,18 @@ async function handleTabKeydown(event: KeyboardEvent) {
             <strong>{{ fullscreenTarget === 'description' ? '任务说明' : '验证方案' }} · 全屏</strong>
             <span v-if="draft.title" class="markdown-fullscreen-modal__task">{{ draft.title }}</span>
           </div>
-          <div class="markdown-fullscreen-modal__actions">
+          <div class="markdown-fullscreen-modal__info">
+            <span class="info-stat">{{ fullscreenCharCount }} 字符</span>
+            <span class="info-sep">·</span>
+            <span class="info-stat">自动保存</span>
+            <span class="info-sep">·</span>
             <button
               type="button"
-              class="secondary-button markdown-fullscreen-modal__exit-btn"
+              class="info-esc-btn"
+              title="按 Esc 键或点击退出全屏"
               @click="closeFullscreen"
             >
-              <Minimize2 :size="14" />
-              <span>退出全屏 (Esc)</span>
+              按 <kbd>Esc</kbd> 退出
             </button>
           </div>
         </header>
