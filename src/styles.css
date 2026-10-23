@@ -1165,7 +1165,7 @@ kbd {
   background: #f7f7f3;
   display: flex;
   flex-direction: column;
-  padding: 12px 18px 18px;
+  padding: 20px 32px 28px;
   overflow: hidden;
   box-sizing: border-box;
 }
@@ -1174,8 +1174,8 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 4px 10px;
-  margin-bottom: 10px;
+  padding-bottom: 14px;
+  margin-bottom: 14px;
   border-bottom: 1px solid var(--line-soft);
 }
 
@@ -1194,7 +1194,7 @@ kbd {
 .markdown-fullscreen-modal__task {
   font-size: 14px;
   color: var(--muted);
-  max-width: 600px;
+  max-width: 500px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1258,9 +1258,9 @@ kbd {
   flex: 1 1 auto;
   height: 100% !important;
   min-height: 0;
+  max-width: 1200px;
   width: 100%;
-  max-width: 100%;
-  margin: 0;
+  margin: 0 auto;
 }
 
 .markdown-fullscreen-modal__body .vditor {
@@ -1272,8 +1272,6 @@ kbd {
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
   background: #ffffff;
   overflow: visible !important;
-  width: 100% !important;
-  max-width: 100% !important;
 }
 
 .markdown-fullscreen-modal__body .vditor-content {
@@ -1281,7 +1279,6 @@ kbd {
   min-height: 0;
   overflow: hidden;
   border-radius: 0 0 8px 8px;
-  width: 100%;
 }
 
 .markdown-fullscreen-modal__body .vditor-ir {
