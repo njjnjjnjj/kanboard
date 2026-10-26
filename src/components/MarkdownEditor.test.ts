@@ -58,4 +58,13 @@ describe("MarkdownEditor", () => {
     expect(spy).toHaveBeenCalledWith(mockFile);
     expect(inserted).toEqual(["![img_test](attachments/2026/10/img_test.png)"]);
   });
+
+  it("shows an actionable error when saving an image fails", async () => {
+    vi.spyOn(attachmentService, "saveImageAttachment").mockRejectedValue("图片大小不能超过 20 MB");
+    const wrapper = mount(MarkdownEditor, { props: { modelValue: "" } });
+    const vm = wrapper.vm as unknown as { handleUpload: (files: File[]) => Promise<string[]> };
+    expect(await vm.handleUpload([new File(["x"], "test.png")])).toEqual([]);
+    expect(wrapper.get('[role="alert"]').text()).toContain("图片大小不能超过 20 MB");
+    wrapper.unmount();
+  });
 });

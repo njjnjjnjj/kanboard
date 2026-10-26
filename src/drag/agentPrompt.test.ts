@@ -22,6 +22,7 @@ describe("agentPrompt", () => {
       checklist: [{ id: "c-1", text: "分析trace", completed: true, position: 1000 }],
       recurrenceRule: "none",
       reviewNotes: "",
+      inAgentSop: false,
       createdAt: "2026-10-21T00:00:00Z",
       updatedAt: "2026-10-21T00:00:00Z",
     };
@@ -54,6 +55,7 @@ describe("agentPrompt", () => {
       checklist: [],
       recurrenceRule: "none",
       reviewNotes: "",
+      inAgentSop: false,
       createdAt: "2026-10-21T00:00:00Z",
       updatedAt: "2026-10-21T00:00:00Z",
     };
@@ -83,6 +85,7 @@ describe("agentPrompt", () => {
       checklist: [],
       recurrenceRule: "none",
       reviewNotes: "",
+      inAgentSop: false,
       createdAt: "2026-10-21T00:00:00Z",
       updatedAt: "2026-10-21T00:00:00Z",
     };

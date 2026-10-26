@@ -14,7 +14,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue("sqlite:kanboard.db"),
 }));
 
-import { deleteTag, restoreTask, saveTaskOrder, trashTask, updateTask, loadTaskWall } from "./taskRepository";
+import { deleteTag, restoreTask, saveTaskOrder, trashTask, updateTask, loadTaskWall, loadDeletedTasks } from "./taskRepository";
 
 describe("task repository ordering", () => {
   beforeEach(() => {
@@ -49,6 +49,7 @@ describe("task repository ordering", () => {
             checklist: [],
             recurrenceRule: "none",
             reviewNotes: "",
+      inAgentSop: false,
             createdAt: "2026-09-15T00:00:00.000Z",
             updatedAt: "2026-09-15T00:00:00.000Z",
           },
@@ -63,6 +64,21 @@ describe("task repository ordering", () => {
       expect.arrayContaining(["doing", 1000, null, "task-1"]),
     );
     expect(columns[1]?.tasks[0]?.columnId).toBe("doing");
+  });
+
+  it.each(["verify", "done"])("clears the agent marker when moved to %s and keeps it off after moving back", async (destination) => {
+    const columns = [{
+      id: destination, title: destination, position: 1000, wipLimit: null,
+      tasks: [{
+        id: "task-1", columnId: "doing", inAgentSop: true, completedAt: null,
+        startedAt: "2026-10-21T00:00:00Z", blockedReason: null, blockedSince: null,
+      }],
+    }] as TaskColumn[];
+    await saveTaskOrder(columns);
+    expect(columns[0]!.tasks[0]!.inAgentSop).toBe(false);
+    columns[0]!.id = "doing";
+    await saveTaskOrder(columns);
+    expect(columns[0]!.tasks[0]!.inAgentSop).toBe(false);
   });
 
 });
@@ -95,6 +111,7 @@ describe("task project and tag persistence", () => {
           blockedSince: null,
           recurrenceRule: "none",
           reviewNotes: "",
+      inAgentSop: false,
           createdAt: "2026-09-16T00:00:00.000Z",
           updatedAt: "2026-09-16T00:00:00.000Z",
         },
@@ -179,5 +196,12 @@ describe("task trash persistence", () => {
       "UPDATE tasks SET deleted_at = NULL, updated_at = $1 WHERE id = $2",
       [expect.any(String), "task-1"],
     );
+  });
+
+  it("keeps the MCP marker when loading a deleted task", async () => {
+    database.select.mockResolvedValueOnce([{ id: "task-1", inAgentSop: 1 }])
+      .mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    expect((await loadDeletedTasks())[0]?.inAgentSop).toBe(true);
+    expect(database.select.mock.calls[0]?.[0]).toContain("t.in_agent_sop AS inAgentSop");
   });
 });

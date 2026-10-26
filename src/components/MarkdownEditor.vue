@@ -3,7 +3,8 @@ import { ref, onMounted, onBeforeUnmount, watch, nextTick } from "vue";
 import Vditor from "vditor";
 import "vditor/dist/index.css";
 import { createElement, Maximize2, Minimize2 } from "lucide";
-import { saveImageAttachment, resolveImageSrc } from "../services/attachmentService";
+import { saveImageAttachment, resolveImageSrc, normalizeAttachmentMarkdown } from "../services/attachmentService";
+import { isLocalDocumentLink, openDocumentPreview, resolveDocumentImageSrc } from "../services/documentPreviewService";
 
 const props = withDefaults(
   defineProps<{
@@ -17,6 +18,7 @@ const props = withDefaults(
     minHeight?: number;
     fullscreen?: boolean;
     readonly?: boolean;
+    documentPreview?: boolean;
   }>(),
   {
     label: "",
@@ -28,6 +30,7 @@ const props = withDefaults(
     minHeight: 180,
     fullscreen: false,
     readonly: false,
+    documentPreview: false,
   },
 );
 
@@ -40,14 +43,33 @@ const editorEl = ref<HTMLDivElement | null>(null);
 let vditor: Vditor | null = null;
 const isReady = ref(false);
 let isInternalChange = false;
+let imageObserver: MutationObserver | null = null;
+const uploadError = ref("");
+const linkError = ref("");
+
+async function handleDocumentLink(event: MouseEvent) {
+  const target = event.target instanceof Element ? event.target : null;
+  const link = target?.closest('a[href], [data-type="a"]');
+  const href = link?.getAttribute("href") || link?.querySelector(":scope > .vditor-ir__marker--link")?.textContent || "";
+  if (!isLocalDocumentLink(href, props.documentPreview)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  linkError.value = "";
+  try {
+    await openDocumentPreview(href);
+  } catch (error) {
+    linkError.value = `文档预览失败：${String(error)}`;
+  }
+}
 
 function resolveLocalImages() {
   if (!editorEl.value) return;
   const images = editorEl.value.querySelectorAll<HTMLImageElement>("img");
   images.forEach((img) => {
     const src = img.getAttribute("src") || "";
-    if (src.startsWith("attachments/")) {
-      img.src = resolveImageSrc(src);
+    if (props.documentPreview || src.startsWith("attachments/")) {
+      const resolved = props.documentPreview ? resolveDocumentImageSrc(src) : resolveImageSrc(src);
+      if (resolved !== src) img.setAttribute("src", resolved);
     }
   });
 }
@@ -57,7 +79,7 @@ function safeGetValue(): string | null {
   try {
     const internal = (vditor as any).vditor;
     if (!internal || !internal.currentMode) return null;
-    return vditor.getValue();
+    return normalizeAttachmentMarkdown(vditor.getValue());
   } catch {
     return null;
   }
@@ -75,6 +97,7 @@ function safeSetValue(val: string) {
 }
 
 async function handleUpload(files: File[]) {
+  uploadError.value = "";
   try {
     const inserted: string[] = [];
     for (const file of files) {
@@ -95,6 +118,7 @@ async function handleUpload(files: File[]) {
     }
     return inserted;
   } catch (err) {
+    uploadError.value = `图片保存失败：${String(err)}`;
     console.error("Failed to upload image", err);
     return [];
   }
@@ -123,6 +147,8 @@ defineExpose({
 
 onMounted(() => {
   if (!editorEl.value) return;
+  imageObserver = new MutationObserver(resolveLocalImages);
+  imageObserver.observe(editorEl.value, { childList: true, subtree: true, attributes: true, attributeFilter: ["src"] });
 
   try {
     vditor = new Vditor(editorEl.value, {
@@ -192,7 +218,7 @@ onMounted(() => {
       input(val) {
         if (props.readonly) return;
         isInternalChange = true;
-        emit("update:modelValue", val);
+        emit("update:modelValue", normalizeAttachmentMarkdown(val));
         nextTick(resolveLocalImages);
         setTimeout(() => {
           isInternalChange = false;
@@ -273,6 +299,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  imageObserver?.disconnect();
   isReady.value = false;
   if (vditor) {
     try {
@@ -288,6 +315,7 @@ onBeforeUnmount(() => {
 <template>
   <div
     class="kanboard-markdown-editor"
+    @click.capture="handleDocumentLink"
     :class="{
       'kanboard-markdown-editor--fullscreen': fullscreen,
       'kanboard-markdown-editor--readonly': readonly,
@@ -316,6 +344,8 @@ onBeforeUnmount(() => {
       @click="emit('toggleFullscreen')"
     />
 
+    <p v-if="uploadError" role="alert">{{ uploadError }}</p>
+    <p v-if="linkError" role="alert">{{ linkError }}</p>
     <div ref="editorEl" class="kanboard-vditor-instance" />
   </div>
 </template>

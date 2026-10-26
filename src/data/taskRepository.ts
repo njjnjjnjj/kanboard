@@ -43,6 +43,7 @@ interface TaskRow {
   blockedSince: string | null;
   recurrenceRule: Task["recurrenceRule"];
   reviewNotes: string;
+  inAgentSop: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -87,6 +88,7 @@ export async function loadTaskWall(): Promise<TaskColumn[]> {
               t.blocked_since AS blockedSince,
               t.recurrence_rule AS recurrenceRule,
               t.review_notes AS reviewNotes,
+              t.in_agent_sop AS inAgentSop,
               t.created_at AS createdAt,
               t.updated_at AS updatedAt
          FROM tasks t
@@ -109,6 +111,7 @@ export async function loadTaskWall(): Promise<TaskColumn[]> {
 
   const tasks: Task[] = taskRows.map((task) => ({
     ...task,
+    inAgentSop: Boolean(task.inAgentSop),
     project: task.projectId && task.projectName && task.projectColor
       ? { id: task.projectId, name: task.projectName, color: task.projectColor, path: task.projectPath ?? "" }
       : null,
@@ -147,6 +150,7 @@ export async function loadDeletedTasks(): Promise<DeletedTask[]> {
               t.blocked_since AS blockedSince,
               t.recurrence_rule AS recurrenceRule,
               t.review_notes AS reviewNotes,
+              t.in_agent_sop AS inAgentSop,
               t.created_at AS createdAt,
               t.updated_at AS updatedAt,
               t.deleted_at AS deletedAt
@@ -174,6 +178,7 @@ export async function loadDeletedTasks(): Promise<DeletedTask[]> {
 
   return taskRows.map((task) => ({
     ...task,
+    inAgentSop: Boolean(task.inAgentSop),
     project: task.projectId && task.projectName && task.projectColor
       ? { id: task.projectId, name: task.projectName, color: task.projectColor, path: task.projectPath ?? "" }
       : null,
@@ -230,6 +235,7 @@ export async function createTask(
     checklist: [],
     recurrenceRule: "none",
     reviewNotes: "",
+    inAgentSop: false,
     createdAt: now,
     updatedAt: now,
   };
@@ -253,7 +259,7 @@ export async function updateTask(id: string, changes: TaskChanges): Promise<Tag[
             description = $4,
             due_date = $5,
             priority = $6,
-            completed_at = $7,
+            completed_at = CASE WHEN $1 = 'done' THEN COALESCE(completed_at, $7) ELSE NULL END,
             started_at = CASE
               WHEN $1 = 'doing' AND column_id <> 'doing' THEN $8
               WHEN $1 <> 'doing' THEN NULL
@@ -267,6 +273,7 @@ export async function updateTask(id: string, changes: TaskChanges): Promise<Tag[
             END,
             recurrence_rule = $10,
             review_notes = $11,
+            in_agent_sop = CASE WHEN $1 IN ('verify', 'done') THEN 0 ELSE in_agent_sop END,
             updated_at = $8
       WHERE id = $12`,
     [
@@ -407,6 +414,7 @@ export async function saveTaskOrder(columns: TaskColumn[]): Promise<void> {
                   WHEN $1 <> 'blocked' THEN NULL
                   ELSE blocked_since
                 END,
+                in_agent_sop = CASE WHEN $1 IN ('verify', 'done') THEN 0 ELSE in_agent_sop END,
                 updated_at = $4
           WHERE id = $5`,
         [column.id, position, completedAt, updatedAt, task.id],
@@ -422,6 +430,9 @@ export async function saveTaskOrder(columns: TaskColumn[]): Promise<void> {
       task.blockedSince = column.id === "blocked"
         ? previousColumnId === "blocked" ? task.blockedSince : updatedAt
         : null;
+      if (column.id === "verify" || column.id === "done") {
+        task.inAgentSop = false;
+      }
       task.updatedAt = updatedAt;
     }
   }

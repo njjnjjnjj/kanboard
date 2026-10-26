@@ -25,6 +25,7 @@ Use the `kanboard` MCP server whenever interacting with the user's Kanboard task
    - 当所有工作完成并通过本地测试后，**调用专用提测工具**：
      `submit_task_verification(task_id, implementation="...", summary="...", test_guide="...")`
      该工具将自动将任务移至「**待验证**（`verify`）」列，并将结构化交付文档记录于独立的「**验证方案**」选项卡中供人工审核。
+   - **实际截图附件**：自行校验中已有的相关截图，应先调用 `import_image_attachment(file_path="本机截图绝对路径")` 导入。工具将图片复制到当前 SQLite 数据库同级的 `attachments` 目录，保留原件。将返回的 `markdown` 写入验证方案，并标明页面状态或验证点；引用格式为 `![验证点](attachments/年/月/文件名.png)`。不得把项目绝对路径、`file://` 或临时显示协议地址写入方案。导入失败时如实报告原因，不得宣称已附图。没有截图时如实说明实际验证方式，无须额外生成截图。
    - **排版与格式规范要求（可读性优先，严格遵守）**：
      - **严禁单行推到底**：严禁将核心改动、交付成果或测试步骤写成无分段、无排版的单行长文本！必须结构化分项呈现，可读性放在第一位。
      - **必要时必须使用 Markdown 表格（Table）**：
@@ -101,6 +102,7 @@ Use the `kanboard` MCP server whenever interacting with the user's Kanboard task
   - `get_flow_metrics`: 看板效能度量（吞吐量、周期耗时、WIP 老化等）；
   - `get_custom_sop`: 获取当前 Kanboard 生效的 SOP，包含概述 summary、完整 Markdown 规范 content 与自定义状态。
 - **执行与变更类**：
+  - `import_image_attachment`: 导入本机实际截图到数据库同级附件目录，返回相对引用和可直接内嵌的 Markdown；源文件保留，支持 PNG、JPEG、GIF、WebP、BMP、SVG，单张最大 20 MB；
   - `submit_task_verification`: 提交任务提测并流转至 `verify` 列，录入结构化实现方案、交付成果与测试指南（支持表格排版、严格中英文空格、无 emoji、禁止单行堆砌）；
   - `update_task_status`: 变更任务列状态（`todo` / `ready` / `doing` / `verify` / `blocked` / `done`），支持可选 `review_notes`；
   - `update_checklist_item`: 勾选/取消勾选子项；

@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 axum = "0.8"
 base64 = "0.22"
+percent-encoding = "2"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 open = "5"
 rmcp = { version = "3.4", features = ["server", "transport-streamable-http-server", "transport-streamable-http-server-session"] }

@@ -28,6 +28,7 @@ const column: TaskColumn = {
       blockedSince: null,
       checklist: [],
       recurrenceRule: "none",
+      inAgentSop: false,
       reviewNotes: "",
       createdAt: "2026-09-15T00:00:00.000Z",
       updatedAt: "2026-09-15T00:00:00.000Z",

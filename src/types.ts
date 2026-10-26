@@ -45,6 +45,7 @@ export interface Task {
   checklist: ChecklistItem[];
   recurrenceRule: RecurrenceRule;
   reviewNotes: string;
+  inAgentSop: boolean;
   createdAt: string;
   updatedAt: string;
 }

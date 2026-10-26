@@ -49,6 +49,7 @@ onBeforeUnmount(() => {
 });
 
 const isDone = computed(() => props.task.columnId === "done");
+const isAgentActive = computed(() => Boolean(props.task.inAgentSop) && props.task.columnId !== "verify" && props.task.columnId !== "done");
 const toggleLabel = computed(() => {
   if (isDone.value) return `恢复任务：${props.task.title}`;
   if (props.task.columnId === "doing") return `提交验证：${props.task.title}`;
@@ -114,7 +115,7 @@ function selectFromKeyboard(event: KeyboardEvent) {
 <template>
   <article
     class="task-card"
-    :class="{ 'task-card--selected': selected, 'task-card--done': isDone }"
+    :class="{ 'task-card--selected': selected, 'task-card--done': isDone, 'task-card--agent-active': isAgentActive }"
     :data-task-id="task.id"
     tabindex="0"
     draggable="true"

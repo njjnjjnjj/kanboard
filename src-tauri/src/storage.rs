@@ -107,6 +107,11 @@ pub(crate) fn migrations() -> Migrator {
             "add_custom_sop",
             include_str!("../migrations/0008_custom_sop.sql"),
         ),
+        (
+            9,
+            "add_agent_sop_status",
+            include_str!("../migrations/0009_agent_sop_status.sql"),
+        ),
     ];
     Migrator {
         migrations: Cow::Owned(
@@ -346,6 +351,16 @@ pub async fn move_storage(
         let _ = fs::remove_file(&target);
         return Err(err);
     }
+    // 附件复制成功后才切换数据库位置，避免静默丢失图片。
+    if let Some(old_parent) = old_path.parent() {
+        let old_attachments = old_parent.join("attachments");
+        if old_attachments.is_dir() {
+            if let Err(err) = copy_dir_all(&old_attachments, &target_dir.join("attachments")) {
+                let _ = fs::remove_file(&target);
+                return Err(format!("附件迁移失败：{err}"));
+            }
+        }
+    }
     let location = serde_json::to_vec(&Location {
         directory: target_dir.clone(),
     })
@@ -353,15 +368,6 @@ pub async fn move_storage(
     if let Err(err) = fs::write(state.config_dir.join(LOCATION_FILE), location) {
         let _ = fs::remove_file(&target);
         return Err(error(err));
-    }
-
-    // 随同将 attachments 附件目录迁移至新目录
-    if let Some(old_parent) = old_path.parent() {
-        let old_attachments = old_parent.join("attachments");
-        if old_attachments.is_dir() {
-            let target_attachments = target_dir.join("attachments");
-            let _ = copy_dir_all(&old_attachments, &target_attachments);
-        }
     }
 
     for DbPool::Sqlite(pool) in guard.values() {
@@ -443,7 +449,7 @@ pub async fn import_data(
     Ok(previous.to_string_lossy().into_owned())
 }
 
-fn detect_image_format(data: &[u8], hint_ext: Option<&str>) -> Result<&'static str, String> {
+fn detect_image_format(data: &[u8]) -> Result<&'static str, String> {
     if data.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
         Ok("png")
     } else if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
@@ -460,16 +466,6 @@ fn detect_image_format(data: &[u8], hint_ext: Option<&str>) -> Result<&'static s
             Ok("svg")
         } else {
             Err("不支持的图片格式：非合法矢量或位图".into())
-        }
-    } else if let Some(ext) = hint_ext {
-        match ext.to_lowercase().as_str() {
-            "png" => Ok("png"),
-            "jpg" | "jpeg" => Ok("jpg"),
-            "gif" => Ok("gif"),
-            "webp" => Ok("webp"),
-            "bmp" => Ok("bmp"),
-            "svg" => Ok("svg"),
-            _ => Err("不支持的图片扩展名".into()),
         }
     } else {
         Err("不支持的图片格式".into())
@@ -495,6 +491,10 @@ pub fn save_image_attachment_impl(
     };
 
     let data = BASE64_STANDARD.decode(raw_b64.trim()).map_err(error)?;
+    save_image_bytes(storage_dir, file_name, &data)
+}
+
+fn save_image_bytes(storage_dir: &Path, file_name: &str, data: &[u8]) -> Result<AttachmentResult, String> {
     if data.is_empty() {
         return Err("图片数据不能为空".into());
     }
@@ -502,10 +502,7 @@ pub fn save_image_attachment_impl(
         return Err("图片大小不能超过 20MB".into());
     }
 
-    let hint_ext = Path::new(file_name)
-        .extension()
-        .and_then(|e| e.to_str());
-    let ext = detect_image_format(&data, hint_ext)?;
+    let ext = detect_image_format(data)?;
 
     let now = chrono::Local::now();
     let year = now.format("%Y").to_string();
@@ -550,6 +547,55 @@ pub fn save_image_attachment_impl(
         file_name: final_name,
         file_size: data.len(),
     })
+}
+
+pub fn import_image_attachment_impl(storage_dir: &Path, source: &Path) -> Result<AttachmentResult, String> {
+    if !source.is_absolute() || !source.is_file() {
+        return Err("请选择图片文件的绝对路径".into());
+    }
+    if fs::metadata(source).map_err(error)?.len() > 20 * 1024 * 1024 {
+        return Err("图片大小不能超过 20 MB".into());
+    }
+    let name = source.file_name().and_then(|name| name.to_str()).ok_or("图片文件名无效")?;
+    save_image_bytes(storage_dir, name, &fs::read(source).map_err(error)?)
+}
+
+pub fn read_image_attachment_impl(storage_dir: &Path, relative_path: &str) -> Result<(Vec<u8>, &'static str), String> {
+    if !relative_path.starts_with("attachments/")
+        || relative_path.contains(['\\', ':'])
+        || relative_path.split('/').any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err("非法附件路径".into());
+    }
+    let root = fs::canonicalize(storage_dir.join("attachments")).map_err(error)?;
+    let target = fs::canonicalize(storage_dir.join(relative_path)).map_err(error)?;
+    let storage = fs::canonicalize(storage_dir).map_err(error)?;
+    if !root.starts_with(&storage) || !target.starts_with(&root) || !target.is_file() {
+        return Err("非法附件路径：超出允许目录范围".into());
+    }
+    read_image_in_directory(&storage, relative_path)
+}
+
+pub(crate) fn read_image_in_directory(directory: &Path, relative_path: &str) -> Result<(Vec<u8>, &'static str), String> {
+    let root = fs::canonicalize(directory).map_err(error)?;
+    let target = fs::canonicalize(directory.join(relative_path)).map_err(error)?;
+    if !target.starts_with(&root) || !target.is_file() {
+        return Err("图片超出文档目录范围".into());
+    }
+    if fs::metadata(&target).map_err(error)?.len() > 20 * 1024 * 1024 {
+        return Err("图片大小不能超过 20 MB".into());
+    }
+    let data = fs::read(target).map_err(error)?;
+    let mime = match detect_image_format(&data)? {
+        "png" => "image/png",
+        "jpg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        _ => unreachable!(),
+    };
+    Ok((data, mime))
 }
 
 #[tauri::command]
@@ -662,6 +708,25 @@ mod tests {
         // 3. Reject corrupted non-image data
         let invalid_base64 = BASE64_STANDARD.encode(b"not an image text");
         assert!(save_image_attachment_impl(&temp_dir, "test.png", &invalid_base64).is_err());
+
+        // 二进制垃圾不能因为扩展名为 PNG 而被放行。
+        assert!(save_image_attachment_impl(&temp_dir, "fake.png", &BASE64_STANDARD.encode([0xff, 0x00, 0x80])).is_err());
+        let (data, mime) = read_image_attachment_impl(&temp_dir, &res.relative_path).unwrap();
+        assert_eq!(mime, "image/png");
+        assert_eq!(data.len(), res.file_size);
+        for path in ["../kanboard.db", "attachments/../../kanboard.db", "kanboard.db", "/attachments/x.png", "attachments/../kanboard.db", "attachments\\x.png", "attachments/C:/x.png"] {
+            assert!(read_image_attachment_impl(&temp_dir, path).is_err(), "{path}");
+        }
+        fs::write(temp_dir.join("attachments/fake.png"), b"not an image").unwrap();
+        assert!(read_image_attachment_impl(&temp_dir, "attachments/fake.png").is_err());
+
+        // 导入保留原件；复制整个附件目录后，相对引用仍可读取相同字节。
+        let imported = import_image_attachment_impl(&temp_dir, Path::new(&res.absolute_path)).unwrap();
+        assert!(Path::new(&res.absolute_path).is_file());
+        assert_ne!(imported.relative_path, res.relative_path);
+        let moved = temp_dir.join("moved");
+        copy_dir_all(&temp_dir.join("attachments"), &moved.join("attachments")).unwrap();
+        assert_eq!(read_image_attachment_impl(&moved, &imported.relative_path).unwrap().0, data);
 
         let _ = fs::remove_dir_all(temp_dir);
     }

@@ -67,6 +67,7 @@ const existingTask: Task = {
   blockedSince: null,
   checklist: [],
   recurrenceRule: "none",
+  inAgentSop: false,
   reviewNotes: "",
   createdAt: "2026-09-15T00:00:00.000Z",
   updatedAt: "2026-09-15T00:00:00.000Z",
@@ -292,6 +293,7 @@ describe("personal task wall", () => {
     const activeWall = wall();
     const task = activeWall[0]!.tasks.shift()!;
     task.columnId = "doing";
+    task.inAgentSop = true;
     activeWall.find((column) => column.id === "doing")!.tasks.push(task);
     repository.loadTaskWall.mockResolvedValue(activeWall);
     const wrapper = mount(App);
@@ -304,6 +306,23 @@ describe("personal task wall", () => {
       "task-1",
       expect.objectContaining({ columnId: "verify" }),
     );
+    expect(wrapper.get("[data-task-id='task-1']").classes()).not.toContain("task-card--agent-active");
+    wrapper.unmount();
+  });
+
+  it("preserves the MCP marker when saving task details", async () => {
+    const activeWall = wall();
+    activeWall[0]!.tasks[0]!.inAgentSop = true;
+    repository.loadTaskWall.mockResolvedValue(activeWall);
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get("[data-task-id='task-1']").trigger("click");
+    await wrapper.get("[data-inspector-title]").setValue("更新标题");
+    await wrapper.get(".task-inspector__form").trigger("submit");
+    await flushPromises();
+    expect(wrapper.get("[data-task-id='task-1']").classes()).toContain("task-card--agent-active");
+    expect(repository.updateTask.mock.calls[0]?.[1]).not.toHaveProperty("inAgentSop");
+    wrapper.unmount();
   });
 
   /** Delete zone geometry as laid out by the app: a compact pill at the bottom centre. */

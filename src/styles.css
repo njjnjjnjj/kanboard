@@ -36,6 +36,10 @@ body,
 
 body { min-width: 1040px; min-height: 680px; user-select: none; }
 body.quick-capture-window { min-width: 420px; min-height: 190px; background: #f4f5f1; }
+body.document-preview-window { min-width: 760px; min-height: 500px; }
+.document-preview .vditor-reset table { display: table; table-layout: fixed; }
+.document-preview .vditor-reset th,
+.document-preview .vditor-reset td { white-space: normal; overflow-wrap: anywhere; }
 button, input, textarea { font: inherit; }
 button { color: inherit; user-select: none; }
 input, textarea { user-select: text; }
@@ -544,6 +548,98 @@ kbd {
 .task-card--ghost { border-color: var(--active-border); background: var(--accent-soft); box-shadow: none; opacity: .36; }
 .task-card--chosen { cursor: grabbing; }
 .task-card--dragging { border-color: var(--active-border); background: #fff; box-shadow: 0 14px 30px rgba(25, 31, 38, .18); cursor: grabbing; }
+
+@property --agent-glow-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes agent-border-spin {
+  0% {
+    --agent-glow-angle: 0deg;
+  }
+  100% {
+    --agent-glow-angle: 360deg;
+  }
+}
+
+@keyframes agent-ambient-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 10px rgba(129, 140, 248, .22),
+      0 0 2px rgba(56, 189, 248, .32),
+      0 2px 7px rgba(39, 38, 34, .07);
+  }
+  50% {
+    box-shadow:
+      0 0 15px rgba(192, 132, 252, .32),
+      0 0 4px rgba(244, 114, 182, .38),
+      0 3px 10px rgba(39, 38, 34, .09);
+  }
+}
+
+.task-card--agent-active {
+  border-color: transparent !important;
+  border-left-color: transparent !important;
+  animation: agent-ambient-pulse 4s ease-in-out infinite;
+}
+
+.task-card--agent-active::before {
+  content: "";
+  position: absolute;
+  /* Absolute positioning starts at the padding box; match the 3 px left border. */
+  inset: -1px -1px -1px -3px;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--agent-glow-angle, 0deg),
+    #38bdf8,
+    #818cf8,
+    #c084fc,
+    #f472b6,
+    #fbbf24,
+    #34d399,
+    #38bdf8
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 2;
+  animation: agent-border-spin 6s linear infinite;
+}
+
+.task-card--selected.task-card--agent-active {
+  box-shadow:
+    0 0 16px rgba(129, 140, 248, .36),
+    0 5px 16px rgba(31, 58, 73, .16);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-card--agent-active {
+    animation: none;
+    box-shadow:
+      0 0 10px rgba(129, 140, 248, .22),
+      0 2px 7px rgba(39, 38, 34, .07);
+  }
+  .task-card--agent-active::before {
+    animation: none;
+    background: linear-gradient(
+      135deg,
+      #38bdf8 0%,
+      #818cf8 25%,
+      #c084fc 50%,
+      #f472b6 75%,
+      #34d399 100%
+    );
+  }
+}
 
 .task-card__top {
   display: grid;

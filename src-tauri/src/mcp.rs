@@ -102,6 +102,7 @@ pub const DEFAULT_SOP_CONTENT: &str = r#"### 任务接单与自主执行 SOP（�
    - 当所有工作完成并通过本地测试后，**调用专用提测工具**：
      `submit_task_verification(task_id, implementation="...", summary="...", test_guide="...")`
      该工具将自动将任务移至「**待验证**（`verify`）」列，并将结构化交付文档记录于独立的「**验证方案**」选项卡中供人工审核。
+   - **实际截图附件**：自行校验中已有的相关截图，应先调用 `import_image_attachment(file_path="本机截图绝对路径")` 导入。工具将图片复制到当前 SQLite 数据库同级的 `attachments` 目录，保留原件。将返回的 `markdown` 写入验证方案，并标明页面状态或验证点；引用格式为 `![验证点](attachments/年/月/文件名.png)`。不得把项目绝对路径、`file://` 或临时显示协议地址写入方案。导入失败时如实报告原因，不得宣称已附图。没有截图时如实说明实际验证方式，无须额外生成截图。
    - **排版与格式规范要求（可读性优先，严格遵守）**：
      - **严禁单行推到底**：严禁将核心改动、交付成果或测试步骤写成无分段、无排版的单行长文本！必须结构化分项呈现，可读性放在第一位。
      - **必要时必须使用 Markdown 表格（Table）**：
@@ -550,6 +551,12 @@ struct SubmitTaskVerificationInput {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ImportImageAttachmentInput {
+    /// 本机已有截图的绝对路径；仅用于导入，不写入验证方案。支持 PNG、JPEG、GIF、WebP、BMP、SVG，最大 20 MB。
+    file_path: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct SetTaskBlockedInput {
     /// Stable task id.
     task_id: String,
@@ -630,6 +637,7 @@ struct TaskData {
     checklist: Vec<ChecklistData>,
     recurrence_rule: String,
     review_notes: String,
+    in_agent_sop: bool,
     created_at: String,
     updated_at: String,
     deleted_at: Option<String>,
@@ -989,8 +997,15 @@ impl KanboardMcp {
         }
 
         let is_done = input.status == "done";
+        let is_verify = input.status == "verify";
         let is_doing = input.status == "doing";
         let is_blocked = input.status == "blocked";
+
+        let in_agent_sop: i64 = if is_done || is_verify {
+            0
+        } else {
+            1
+        };
 
         let completed_at: Option<String> = if is_done {
             Some(task.completed_at.clone().unwrap_or_else(|| now.clone()))
@@ -999,11 +1014,13 @@ impl KanboardMcp {
         };
 
         let started_at: Option<String> = if is_doing {
-            Some(task.started_at.clone().unwrap_or_else(|| now.clone()))
-        } else if task.column_id == "doing" {
-            task.started_at.clone()
+            Some(if task.column_id == "doing" {
+                task.started_at.clone().unwrap_or_else(|| now.clone())
+            } else {
+                now.clone()
+            })
         } else {
-            task.started_at.clone()
+            None
         };
 
         let blocked_reason: Option<String> = if is_blocked {
@@ -1044,7 +1061,7 @@ impl KanboardMcp {
         };
 
         sqlx::query(
-            "UPDATE tasks SET column_id = ?, completed_at = ?, started_at = ?, blocked_reason = ?, blocked_since = ?, description = ?, review_notes = ?, updated_at = ? WHERE id = ?"
+            "UPDATE tasks SET column_id = ?, completed_at = ?, started_at = ?, blocked_reason = ?, blocked_since = ?, description = ?, review_notes = ?, in_agent_sop = ?, updated_at = ? WHERE id = ?"
         )
         .bind(&input.status)
         .bind(&completed_at)
@@ -1053,6 +1070,7 @@ impl KanboardMcp {
         .bind(&blocked_since)
         .bind(&updated_desc)
         .bind(&updated_review_notes)
+        .bind(in_agent_sop)
         .bind(&now)
         .bind(&input.task_id)
         .execute(&pool)
@@ -1100,7 +1118,20 @@ impl KanboardMcp {
         structured(json!({ "task": updated_task }))
     }
 
-    #[tool(description = "提交任务验证方案并移入待验证列（verify）。Agent 必须使用纯中文提供实现方案、交付情况及测试验证说明，文案排版须严格遵循中文文案排版指北（中英文及数字间规范空格），段落内支持标准 Markdown 语法，严禁使用 emoji，严禁自行直接标记为完成（done）。")]
+    #[tool(description = "将本机截图复制到当前 SQLite 数据库同级 attachments 目录，保留原文件。返回 attachment.relativePath 和可直接内嵌的 markdown。提交验证方案前先调用本工具导入实际截图，使用返回的相对引用，禁止使用项目绝对路径。")]
+    async fn import_image_attachment(
+        &self,
+        Parameters(input): Parameters<ImportImageAttachmentInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let database = self.database_path.lock().map_err(mcp_error)?.clone();
+        let directory = database.parent().ok_or_else(|| mcp_error("数据库路径无效"))?;
+        let attachment = crate::storage::import_image_attachment_impl(directory, std::path::Path::new(&input.file_path))
+            .map_err(|err| rmcp::ErrorData::invalid_params(err, None))?;
+        let markdown = format!("![{}]({})", attachment.file_name, attachment.relative_path);
+        structured(json!({ "attachment": attachment, "markdown": markdown }))
+    }
+
+    #[tool(description = "提交任务验证方案并移入待验证列（verify）。实际截图先调用 import_image_attachment 导入，再将返回的 markdown 相对引用写入方案，禁止图片使用项目绝对路径。Agent 必须使用中文提供实现方案、交付情况及测试验证说明，中英文及数字间规范空格，支持标准 Markdown，严禁使用 emoji，严禁自行标记为完成（done）。")]
     async fn submit_task_verification(
         &self,
         Parameters(input): Parameters<SubmitTaskVerificationInput>,
@@ -1121,7 +1152,7 @@ impl KanboardMcp {
         );
 
         sqlx::query(
-            "UPDATE tasks SET column_id = 'verify', review_notes = ?, updated_at = ? WHERE id = ?"
+            "UPDATE tasks SET column_id = 'verify', completed_at = NULL, started_at = NULL, blocked_reason = NULL, blocked_since = NULL, review_notes = ?, in_agent_sop = 0, updated_at = ? WHERE id = ?"
         )
         .bind(&formatted_notes)
         .bind(&now)
@@ -1190,9 +1221,10 @@ impl KanboardMcp {
         };
 
         sqlx::query(
-            "UPDATE tasks SET column_id = 'blocked', blocked_reason = ?, blocked_since = ?, description = ?, updated_at = ? WHERE id = ?"
+            "UPDATE tasks SET column_id = 'blocked', completed_at = NULL, started_at = NULL, blocked_reason = ?, blocked_since = CASE WHEN column_id = 'blocked' THEN COALESCE(blocked_since, ?) ELSE ? END, in_agent_sop = 1, description = ?, updated_at = ? WHERE id = ?"
         )
         .bind(&reason)
+        .bind(&now)
         .bind(&now)
         .bind(&new_description)
         .bind(&now)
@@ -1253,12 +1285,14 @@ impl KanboardMcp {
             return Err(rmcp::ErrorData::invalid_params("找不到检查项或任务不匹配", None));
         }
 
-        sqlx::query("UPDATE tasks SET updated_at = ? WHERE id = ?")
-            .bind(&now)
-            .bind(&input.task_id)
-            .execute(&pool)
-            .await
-            .map_err(mcp_error)?;
+        sqlx::query(
+            "UPDATE tasks SET in_agent_sop = CASE WHEN column_id IN ('verify', 'done') THEN 0 ELSE 1 END, updated_at = ? WHERE id = ?"
+        )
+        .bind(&now)
+        .bind(&input.task_id)
+        .execute(&pool)
+        .await
+        .map_err(mcp_error)?;
 
         let updated_task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
         pool.close().await;
@@ -1292,13 +1326,15 @@ impl KanboardMcp {
             format!("{}\n\n[{}] {}", task.description.trim(), &now[0..19].replace('T', " "), trimmed)
         };
 
-        sqlx::query("UPDATE tasks SET description = ?, updated_at = ? WHERE id = ?")
-            .bind(&new_desc)
-            .bind(&now)
-            .bind(&input.task_id)
-            .execute(&pool)
-            .await
-            .map_err(mcp_error)?;
+        sqlx::query(
+            "UPDATE tasks SET description = ?, in_agent_sop = CASE WHEN column_id IN ('verify', 'done') THEN 0 ELSE 1 END, updated_at = ? WHERE id = ?"
+        )
+        .bind(&new_desc)
+        .bind(&now)
+        .bind(&input.task_id)
+        .execute(&pool)
+        .await
+        .map_err(mcp_error)?;
 
         let updated_task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
         pool.close().await;
@@ -1495,7 +1531,7 @@ async fn load_task_by_id(pool: &SqlitePool, task_id: &str) -> Result<Option<Task
 
 async fn load_all_tasks(pool: &SqlitePool) -> Result<Vec<TaskData>, sqlx::Error> {
     let task_rows = sqlx::query(
-        "SELECT t.id, t.column_id, t.project_id, p.name AS project_name, p.color AS project_color, p.path AS project_path, t.title, t.description, t.due_date, t.priority, t.position, t.completed_at, t.started_at, t.blocked_reason, t.blocked_since, t.recurrence_rule, t.review_notes, t.created_at, t.updated_at, t.deleted_at FROM tasks t LEFT JOIN projects p ON p.id = t.project_id ORDER BY t.position",
+        "SELECT t.id, t.column_id, t.project_id, p.name AS project_name, p.color AS project_color, p.path AS project_path, t.title, t.description, t.due_date, t.priority, t.position, t.completed_at, t.started_at, t.blocked_reason, t.blocked_since, t.recurrence_rule, t.review_notes, t.in_agent_sop, t.created_at, t.updated_at, t.deleted_at FROM tasks t LEFT JOIN projects p ON p.id = t.project_id ORDER BY t.position",
     )
     .fetch_all(pool)
     .await?;
@@ -1560,6 +1596,7 @@ async fn load_all_tasks(pool: &SqlitePool) -> Result<Vec<TaskData>, sqlx::Error>
                 checklist: checklist.remove(&id).unwrap_or_default(),
                 recurrence_rule: row.get("recurrence_rule"),
                 review_notes: row.get::<Option<String>, _>("review_notes").unwrap_or_default(),
+                in_agent_sop: row.get::<i64, _>("in_agent_sop") != 0,
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 deleted_at: row.get("deleted_at"),
@@ -1726,6 +1763,94 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn agent_sop_tracks_mutations_and_clears_transition_metadata() {
+        let directory = std::env::temp_dir().join(format!(
+            "kanboard-agent-state-{}-{}", std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let database = directory.join("kanboard.db");
+        let pool = SqlitePool::connect_with(
+            SqliteConnectOptions::new().filename(&database).create_if_missing(true)
+        ).await.unwrap();
+        crate::storage::migrations().run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO tasks (id, column_id, title, position, created_at, updated_at) VALUES ('agent-task', 'todo', '状态流转测试', 1000, '2026-10-21T00:00:00Z', '2026-10-21T00:00:00Z')")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO task_checklist_items (id, task_id, text, position) VALUES ('item-1', 'agent-task', '完成条件', 1000)")
+            .execute(&pool).await.unwrap();
+        let service = KanboardMcp::new(Arc::new(Mutex::new(database.clone())), None);
+
+        service.append_task_notes(Parameters(AppendTaskNotesInput {
+            task_id: "agent-task".into(), notes: "接单".into(),
+        })).await.unwrap();
+        assert!(load_task_by_id(&pool, "agent-task").await.unwrap().unwrap().in_agent_sop);
+
+        for status in ["doing", "doing", "blocked", "ready", "verify", "done", "todo"] {
+            let result = service.update_task_status(Parameters(UpdateTaskStatusInput {
+                task_id: "agent-task".into(), status: status.into(),
+                reason: None, comment: None, review_notes: None,
+            })).await.unwrap().structured_content.unwrap();
+            let task = &result["task"];
+            assert_eq!(task["inAgentSop"], status != "verify" && status != "done");
+            assert_eq!(task["startedAt"].is_string(), status == "doing");
+            assert_eq!(task["completedAt"].is_string(), status == "done");
+            assert_eq!(task["blockedSince"].is_string(), status == "blocked");
+            assert_eq!(task["blockedReason"].is_string(), status == "blocked");
+        }
+        let events = load_events(&pool, Some("agent-task"), 100).await.unwrap();
+        assert_eq!(events.len(), 6, "重复设置相同状态不应生成流转事件");
+
+        // Dedicated blocking clears stale completion/start metadata and preserves its timer.
+        sqlx::query("UPDATE tasks SET completed_at = 'old', started_at = 'old' WHERE id = 'agent-task'")
+            .execute(&pool).await.unwrap();
+        service.set_task_blocked(Parameters(SetTaskBlockedInput {
+            task_id: "agent-task".into(), reason: "technical".into(), detail: "首次阻塞".into(),
+        })).await.unwrap();
+        let blocked = load_task_by_id(&pool, "agent-task").await.unwrap().unwrap();
+        assert!(blocked.in_agent_sop);
+        assert!(blocked.completed_at.is_none());
+        assert!(blocked.started_at.is_none());
+        sqlx::query("UPDATE tasks SET blocked_since = '2026-10-21T00:00:00Z' WHERE id = 'agent-task'")
+            .execute(&pool).await.unwrap();
+        service.set_task_blocked(Parameters(SetTaskBlockedInput {
+            task_id: "agent-task".into(), reason: "technical".into(), detail: "补充阻塞详情".into(),
+        })).await.unwrap();
+        assert_eq!(load_task_by_id(&pool, "agent-task").await.unwrap().unwrap().blocked_since.as_deref(), Some("2026-10-21T00:00:00Z"));
+
+        for initial_status in ["blocked", "done"] {
+            sqlx::query("UPDATE tasks SET column_id = ?, completed_at = 'old' WHERE id = 'agent-task'")
+                .bind(initial_status).execute(&pool).await.unwrap();
+            let result = service.submit_task_verification(Parameters(SubmitTaskVerificationInput {
+                task_id: "agent-task".into(), implementation: "实现方案".into(),
+                summary: "交付成果".into(), test_guide: "验证步骤".into(),
+            })).await.unwrap().structured_content.unwrap();
+            let task = &result["task"];
+            assert_eq!(task["columnId"], "verify");
+            assert_eq!(task["inAgentSop"], false);
+            for field in ["completedAt", "startedAt", "blockedReason", "blockedSince"] {
+                assert!(task[field].is_null(), "提测必须清除 {field}");
+            }
+        }
+
+        for status in ["verify", "done", "ready"] {
+            sqlx::query("UPDATE tasks SET column_id = ?, in_agent_sop = 0 WHERE id = 'agent-task'")
+                .bind(status).execute(&pool).await.unwrap();
+            service.update_checklist_item(Parameters(UpdateChecklistItemInput {
+                task_id: "agent-task".into(), item_id: "item-1".into(), completed: true,
+            })).await.unwrap();
+            assert_eq!(load_task_by_id(&pool, "agent-task").await.unwrap().unwrap().in_agent_sop, status == "ready");
+            service.append_task_notes(Parameters(AppendTaskNotesInput {
+                task_id: "agent-task".into(), notes: "补充说明".into(),
+            })).await.unwrap();
+            assert_eq!(load_task_by_id(&pool, "agent-task").await.unwrap().unwrap().in_agent_sop, status == "ready");
+        }
+
+        pool.close().await;
+        fs::remove_file(database).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
+
+    #[tokio::test]
     async fn streamable_http_lists_and_calls_read_tools() {
         let directory = std::env::temp_dir().join(format!(
             "kanboard-mcp-test-{}-{}",
@@ -1789,6 +1914,7 @@ mod tests {
         assert!(names.contains("append_task_notes"));
         assert!(names.contains("set_project_path"));
         assert!(names.contains("submit_task_verification"));
+        assert!(names.contains("import_image_attachment"));
         assert!(names.contains("get_custom_sop"));
         assert!(names.contains("set_custom_sop"));
         assert!(names.contains("reset_custom_sop"));
@@ -1842,6 +1968,19 @@ mod tests {
         .unwrap();
         test_pool.close().await;
 
+        let source_image = directory.join("actual-screenshot.png");
+        let png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+        fs::write(&source_image, png).unwrap();
+        let image_result = client.call_tool(
+            CallToolRequestParams::new("import_image_attachment")
+                .with_arguments(serde_json::from_value(json!({ "file_path": source_image })).unwrap())
+        ).await.unwrap().structured_content.unwrap();
+        let relative = image_result["attachment"]["relativePath"].as_str().unwrap();
+        assert!(relative.starts_with("attachments/"));
+        assert!(image_result["markdown"].as_str().unwrap().contains(relative));
+        assert_eq!(crate::storage::read_image_attachment_impl(&directory, relative).unwrap().0, png);
+        assert!(source_image.is_file());
+
         let verify_res = client
             .call_tool(
                 CallToolRequestParams::new("submit_task_verification")
@@ -1849,7 +1988,7 @@ mod tests {
                         "task_id": "task-test-1",
                         "implementation": "| 模块 | 改动类型 | 核心逻辑说明 |\n| :--- | :--- | :--- |\n| `mcp.rs` | 接口规范 | 支持结构化表格入参 |\n| `TaskInspector.vue` | 前端组件 | 渲染 Markdown 表格与视图切换 |",
                         "summary": "- [x] 全部 68 项前端单测通过\n- [x] 全部 2 项后端单测通过",
-                        "test_guide": "| 验证项 | 测试命令 / 操作路径 | 预期效果 |\n| :--- | :--- | :--- |\n| 前端单测 | `npm test` | 68 passed |\n| 后端测试 | `cargo test` | 2 passed |"
+                        "test_guide": format!("| 验证项 | 测试命令 / 操作路径 | 预期效果 |\n| :--- | :--- | :--- |\n| 前端单测 | `npm test` | 68 passed |\n| 后端测试 | `cargo test` | 2 passed |\n\n{}", image_result["markdown"].as_str().unwrap())
                     })).unwrap())
             )
             .await
@@ -1858,11 +1997,14 @@ mod tests {
         assert_eq!(verify_content["task"]["columnId"], "verify");
         assert!(verify_content["task"]["reviewNotes"].as_str().unwrap().contains("| 模块 | 改动类型 | 核心逻辑说明 |"));
         assert_eq!(verify_content["verifiedPending"], true);
+        assert!(verify_content["task"]["reviewNotes"].as_str().unwrap().contains(relative));
 
         client.cancel().await.unwrap();
         cancellation.cancel();
         server.await.unwrap();
         fs::remove_file(database).unwrap();
+        fs::remove_file(source_image).unwrap();
+        fs::remove_dir_all(directory.join("attachments")).unwrap();
         fs::remove_dir(directory).unwrap();
     }
 }

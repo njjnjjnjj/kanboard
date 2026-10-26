@@ -1,6 +1,8 @@
 mod mcp;
 mod storage;
+mod document_preview;
 pub mod windows_notify;
+use tauri::Manager;
 
 pub struct PendingTaskState(pub std::sync::Mutex<Option<String>>);
 
@@ -13,7 +15,7 @@ fn get_pending_open_task(state: tauri::State<'_, PendingTaskState>) -> Option<St
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, Listener, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 #[cfg(desktop)]
 use tauri_plugin_global_shortcut::{
@@ -156,6 +158,11 @@ pub fn run() {
                 Ok(())
             })
             .on_window_event(|window, event| {
+                if matches!(event, WindowEvent::Destroyed) {
+                    if let Ok(mut documents) = window.state::<document_preview::DocumentPreviews>().0.lock() {
+                        documents.remove(window.label());
+                    }
+                }
                 if window.label() == "main" {
                     if let WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
@@ -166,6 +173,31 @@ pub fn run() {
     }
 
     builder
+        .manage(document_preview::DocumentPreviews::default())
+        .register_uri_scheme_protocol("kanboard-document-image", |context, request| {
+            document_preview::image_response(context.app_handle(), context.webview_label(), request.uri().path())
+        })
+        .register_uri_scheme_protocol("kanboard-image", |context, request| {
+            let result = context.app_handle().try_state::<storage::StorageState>()
+                .ok_or_else(|| "存储尚未初始化".to_string())
+                .and_then(|state| {
+                    let database = storage::current_path_handle(&state)
+                        .lock().map_err(|err| err.to_string())?.clone();
+                    let directory = database.parent().ok_or("数据库路径无效")?;
+                    let path = percent_encoding::percent_decode_str(request.uri().path().trim_start_matches('/'))
+                        .decode_utf8().map_err(|err| err.to_string())?;
+                    storage::read_image_attachment_impl(directory, &path)
+                });
+            match result {
+                Ok((data, mime)) => tauri::http::Response::builder()
+                    .header("Content-Type", mime)
+                    .header("X-Content-Type-Options", "nosniff")
+                    .header("Cache-Control", "no-store")
+                    .body(data).unwrap(),
+                Err(_) => tauri::http::Response::builder()
+                    .status(404).body(Vec::new()).unwrap(),
+            }
+        })
         .manage(PendingTaskState(std::sync::Mutex::new(initial_task)))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
@@ -178,6 +210,8 @@ pub fn run() {
             storage::move_storage,
             storage::save_image_attachment,
             storage::resolve_attachment_path,
+            document_preview::open_document_preview,
+            document_preview::get_preview_document,
             mcp::get_mcp_status,
             mcp::set_mcp_enabled,
             mcp::connect_codex,

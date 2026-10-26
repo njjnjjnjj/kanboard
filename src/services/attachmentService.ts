@@ -7,8 +7,6 @@ export interface AttachmentResult {
   fileSize: number;
 }
 
-let cachedStorageDir: string | null = null;
-
 export async function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -18,20 +16,6 @@ export async function blobToBase64(blob: Blob): Promise<string> {
     reader.onerror = (error) => reject(error);
     reader.readAsDataURL(blob);
   });
-}
-
-export async function getStorageDirectory(): Promise<string> {
-  if (cachedStorageDir) return cachedStorageDir;
-  if (isTauri()) {
-    try {
-      const info = await invoke<{ directory: string }>("get_storage_info");
-      cachedStorageDir = info.directory;
-      return info.directory;
-    } catch (err) {
-      console.error("Failed to get storage directory", err);
-    }
-  }
-  return "";
 }
 
 export async function saveImageAttachment(
@@ -62,28 +46,29 @@ export async function saveImageAttachment(
   };
 }
 
-export function resolveImageSrc(src: string, storageDir?: string): string {
+export function resolveImageSrc(src: string): string {
   if (!src) return "";
   if (/^(https?:|data:|blob:)/i.test(src)) {
     return src;
   }
 
-  if (isTauri()) {
-    try {
-      // 相对附件路径处理（例如 attachments/2026/10/img.png）
-      if (!src.includes(":") && !src.startsWith("/") && !src.startsWith("\\")) {
-        const base = storageDir || cachedStorageDir;
-        if (base) {
-          const sep = base.includes("\\") ? "\\" : "/";
-          const fullPath = `${base}${sep}${src.replace(/\//g, sep)}`;
-          return convertFileSrc(fullPath);
-        }
-      }
-      return convertFileSrc(src);
-    } catch {
-      return src;
-    }
+  if (src.startsWith("attachments/")) {
+    return isTauri() ? convertFileSrc(src, "kanboard-image") : src;
   }
+  // 项目绝对路径必须先导入，不能直接交给 WebView 读取。
+  return "";
+}
 
-  return src;
+export function normalizeAttachmentMarkdown(markdown: string): string {
+  return markdown.replace(
+    /(?:https?:\/\/kanboard-image\.localhost\/|kanboard-image:\/\/localhost\/)([^\s)"<>]+)/g,
+    (url, path: string) => {
+      try {
+        const relative = decodeURIComponent(path);
+        return relative.startsWith("attachments/") ? relative : url;
+      } catch {
+        return url;
+      }
+    },
+  );
 }

@@ -26,6 +26,7 @@ const mockTask: Task = {
   checklist: [{ id: "c-1", text: "测试子任务", completed: false, position: 1000 }],
   recurrenceRule: "none",
   reviewNotes: "",
+  inAgentSop: false,
   createdAt: "2026-10-21T00:00:00Z",
   updatedAt: "2026-10-21T00:00:00Z",
 };
@@ -113,5 +114,66 @@ describe("TaskCard native drag", () => {
     );
     expect(wrapper.emitted("select")).toBeUndefined();
     expect(copyBtn.classes()).toContain("task-card__copy-btn--copied");
+    expect(wrapper.emitted("dispatchAgent")).toBeUndefined();
+    expect(wrapper.get(".task-card").classes()).not.toContain("task-card--agent-active");
+  });
+
+  it("applies task-card--agent-active when inAgentSop is true and column is not verify or done", () => {
+    const doingWrapper = mount(TaskCard, {
+      props: {
+        task: { ...mockTask, columnId: "doing", inAgentSop: true },
+        selected: false,
+      },
+    });
+    expect(doingWrapper.get(".task-card").classes()).toContain("task-card--agent-active");
+
+    const blockedWrapper = mount(TaskCard, {
+      props: {
+        task: { ...mockTask, columnId: "blocked", inAgentSop: true },
+        selected: false,
+      },
+    });
+    expect(blockedWrapper.get(".task-card").classes()).toContain("task-card--agent-active");
+
+    const verifyWrapper = mount(TaskCard, {
+      props: {
+        task: { ...mockTask, columnId: "verify", inAgentSop: true },
+        selected: false,
+      },
+    });
+    expect(verifyWrapper.get(".task-card").classes()).not.toContain("task-card--agent-active");
+
+    const doneWrapper = mount(TaskCard, {
+      props: {
+        task: { ...mockTask, columnId: "done", inAgentSop: true },
+        selected: false,
+      },
+    });
+    expect(doneWrapper.get(".task-card").classes()).not.toContain("task-card--agent-active");
+  });
+
+  it.each(["todo", "backlog", "ready", "doing", "blocked", "verify", "done"])("uses the MCP marker in %s", (columnId) => {
+    for (const inAgentSop of [false, true]) {
+      const wrapper = mount(TaskCard, { props: { task: { ...mockTask, columnId, inAgentSop }, selected: false } });
+      expect(wrapper.classes().includes("task-card--agent-active")).toBe(inAgentSop && columnId !== "verify" && columnId !== "done");
+      wrapper.unmount();
+    }
+  });
+
+  it("does not activate the agent effect on dragstart", async () => {
+    const wrapper = mount(TaskCard, {
+      props: { task: mockTask, selected: false },
+    });
+    const setData = vi.fn();
+    const event = {
+      dataTransfer: {
+        setData,
+        effectAllowed: "",
+      },
+    } as unknown as DragEvent;
+
+    await wrapper.get(".task-card").trigger("dragstart", event);
+    expect(wrapper.emitted("dispatchAgent")).toBeUndefined();
+    expect(wrapper.get(".task-card").classes()).not.toContain("task-card--agent-active");
   });
 });

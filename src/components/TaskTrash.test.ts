@@ -20,6 +20,7 @@ const task = {
   blockedSince: null,
   checklist: [],
   recurrenceRule: "none",
+  inAgentSop: false,
   reviewNotes: "",
   createdAt: "2026-09-17T00:00:00.000Z",
   updatedAt: "2026-09-17T00:00:00.000Z",

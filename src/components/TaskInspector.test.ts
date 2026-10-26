@@ -20,6 +20,7 @@ const mockTask: Task = {
   blockedSince: null,
   checklist: [],
   recurrenceRule: "none",
+  inAgentSop: false,
   reviewNotes: "### 1. 核心改动与实现方案\n\n| 模块 | 改动说明 |\n| :--- | :--- |\n| `TaskInspector.vue` | 增加表格渲染 |\n\n### 2. 交付成果\n\n- [x] 全部功能点已实现\n- [x] 新增 3 项测试\n\n### 3. 测试与验证指南\n\n```bash\nnpm test\n```",
   createdAt: "2026-10-21T00:00:00Z",
   updatedAt: "2026-10-21T00:00:00Z",
@@ -33,6 +34,16 @@ const columns: TaskColumn[] = [
 ];
 
 describe("TaskInspector verification tab", () => {
+  it("does not expose or submit an editable agent marker", async () => {
+    const wrapper = mount(TaskInspector, {
+      props: { task: { ...mockTask, columnId: "doing", inAgentSop: true }, columns, projects: [], tags: [], saving: false },
+    });
+    expect(wrapper.find(".field--agent-sop").exists()).toBe(false);
+    await wrapper.get("form").trigger("submit");
+    expect(wrapper.emitted("save")?.[0]?.[1]).not.toHaveProperty("inAgentSop");
+    wrapper.unmount();
+  });
+
   it("renders 3 peer tabs with '验证方案' and auto-selects verification tab when task is in verify status", () => {
     const wrapper = mount(TaskInspector, {
       props: {

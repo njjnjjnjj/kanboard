@@ -3,6 +3,10 @@ import { resolveImageSrc } from "../services/attachmentService";
 
 let initialized = false;
 
+function escapeAttribute(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 export function getMarkedInstance() {
   if (!initialized) {
     marked.use({
@@ -11,9 +15,9 @@ export function getMarkedInstance() {
       renderer: {
         image(token) {
           const resolved = resolveImageSrc(token.href);
-          const title = token.title ? ` title="${token.title}"` : "";
-          const alt = token.text ? ` alt="${token.text}"` : "";
-          return `<img src="${resolved}"${alt}${title} class="markdown-image" loading="lazy" />`;
+          const title = token.title ? ` title="${escapeAttribute(token.title)}"` : "";
+          const alt = token.text ? ` alt="${escapeAttribute(token.text)}"` : "";
+          return `<img src="${escapeAttribute(resolved)}"${alt}${title} class="markdown-image" loading="lazy" />`;
         },
       },
     });

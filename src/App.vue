@@ -303,6 +303,7 @@ async function saveChanges(taskId: string, changes: TaskChanges) {
         : null,
       checklist: changes.checklist.map((item, index) => ({ ...item, position: (index + 1) * 1000 })),
       recurrenceRule: changes.recurrenceRule,
+      inAgentSop: changes.columnId === "verify" || changes.columnId === "done" ? false : task.inAgentSop,
       updatedAt: new Date().toISOString(),
     });
     for (const tag of savedTags) {

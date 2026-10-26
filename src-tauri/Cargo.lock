@@ -2269,6 +2269,7 @@ dependencies = [
  "chrono",
  "notify-rust",
  "open",
+ "percent-encoding",
  "rmcp",
  "serde",
  "serde_json",
