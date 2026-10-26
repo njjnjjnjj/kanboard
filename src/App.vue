@@ -50,7 +50,10 @@ const taskEvents = ref<TaskEvent[]>([]);
 const deletedTasks = ref<DeletedTask[]>([]);
 const recentlyDeleted = ref<{ task: Task; deletedAt: string } | null>(null);
 const undoSeconds = ref(3);
-const loading = ref(true);
+const hasLoadedOnce = ref(false);
+const initialLoading = ref(true);
+const refreshing = ref(false);
+const loading = computed(() => initialLoading.value && !hasLoadedOnce.value);
 const saving = ref(false);
 const errorMessage = ref("");
 const statusMessage = ref("");
@@ -62,6 +65,8 @@ const dragSnapshot = ref<TaskColumn[] | null>(null);
 const projectEditorOpen = ref(false);
 const editingProject = ref<Project | null>(null);
 
+let pendingRefreshAfterDrag = false;
+let queuedRefresh = false;
 let orderQueue: Promise<boolean> = Promise.resolve(true);
 let statusTimer: number | undefined;
 let unlistenTaskCreated: UnlistenFn | undefined;
@@ -157,12 +162,95 @@ function announce(message: string) {
 }
 provide("announce", announce);
 
+function reconcileColumns(currentColumns: TaskColumn[], newColumns: TaskColumn[]) {
+  if (currentColumns.length === 0) {
+    currentColumns.push(...newColumns);
+    return;
+  }
+
+  const newColumnMap = new Map(newColumns.map((col) => [col.id, col]));
+  const existingTaskMap = new Map<string, Task>();
+  for (const col of currentColumns) {
+    for (const t of col.tasks) {
+      existingTaskMap.set(t.id, t);
+    }
+  }
+
+  for (let i = currentColumns.length - 1; i >= 0; i--) {
+    if (!newColumnMap.has(currentColumns[i].id)) {
+      currentColumns.splice(i, 1);
+    }
+  }
+
+  for (const newCol of newColumns) {
+    let col = currentColumns.find((c) => c.id === newCol.id);
+    if (!col) {
+      col = { ...newCol, tasks: [] };
+      currentColumns.push(col);
+    }
+    col.title = newCol.title;
+    col.position = newCol.position;
+    col.wipLimit = newCol.wipLimit;
+
+    const nextTasks: Task[] = [];
+    for (const freshTask of newCol.tasks) {
+      const existing = existingTaskMap.get(freshTask.id);
+      if (existing) {
+        Object.assign(existing, freshTask);
+        nextTasks.push(existing);
+      } else {
+        nextTasks.push(freshTask);
+      }
+    }
+    col.tasks = nextTasks;
+  }
+}
+
+function reconcileProjects(currentProjects: Project[], newProjects: Project[]) {
+  const existingMap = new Map(currentProjects.map((p) => [p.id, p]));
+  const result: Project[] = [];
+  for (const p of newProjects) {
+    const existing = existingMap.get(p.id);
+    if (existing) {
+      Object.assign(existing, p);
+      result.push(existing);
+    } else {
+      result.push(p);
+    }
+  }
+  currentProjects.splice(0, currentProjects.length, ...result);
+}
+
+function reconcileTags(currentTags: Tag[], newTags: Tag[]) {
+  const existingMap = new Map(currentTags.map((t) => [t.id, t]));
+  const result: Tag[] = [];
+  for (const t of newTags) {
+    const existing = existingMap.get(t.id);
+    if (existing) {
+      Object.assign(existing, t);
+      result.push(existing);
+    } else {
+      result.push(t);
+    }
+  }
+  currentTags.splice(0, currentTags.length, ...result);
+}
+
 let loadPromise: Promise<void> | null = null;
-async function load() {
-  if (loadPromise) return loadPromise;
+async function load(options: { initial?: boolean; silent?: boolean } = {}) {
+  const isInitial = options.initial || !hasLoadedOnce.value;
+  if (loadPromise) {
+    if (!isInitial) queuedRefresh = true;
+    return loadPromise;
+  }
+
   loadPromise = (async () => {
-    loading.value = true;
-    errorMessage.value = "";
+    if (isInitial) {
+      initialLoading.value = true;
+      errorMessage.value = "";
+    } else {
+      refreshing.value = true;
+    }
     try {
       const [taskWall, projectList, tagList, events, trashedTasks] = await Promise.all([
         loadTaskWall(),
@@ -171,21 +259,49 @@ async function load() {
         loadTaskEvents(),
         loadDeletedTasks(),
       ]);
-      columns.value = taskWall;
-      projects.value = projectList;
-      tags.value = tagList;
-      taskEvents.value = events;
-      deletedTasks.value = trashedTasks;
+
+      if (isInitial) {
+        columns.value = taskWall;
+        projects.value = projectList;
+        tags.value = tagList;
+        taskEvents.value = events;
+        deletedTasks.value = trashedTasks;
+        hasLoadedOnce.value = true;
+      } else {
+        reconcileColumns(columns.value, taskWall);
+        reconcileProjects(projects.value, projectList);
+        reconcileTags(tags.value, tagList);
+        taskEvents.value = events;
+        deletedTasks.value = trashedTasks;
+      }
+
       if (selectedTaskId.value && !selectedTask.value) selectedTaskId.value = null;
     } catch (error) {
       console.error(error);
-      errorMessage.value = "无法打开本地数据库。请关闭应用后重新启动。";
+      if (isInitial) {
+        errorMessage.value = "无法打开本地数据库。请关闭应用后重新启动。";
+      } else {
+        announce("刷新数据失败，请重试");
+      }
     } finally {
-      loading.value = false;
+      if (isInitial) initialLoading.value = false;
+      refreshing.value = false;
       loadPromise = null;
+      if (queuedRefresh) {
+        queuedRefresh = false;
+        await load({ initial: false, silent: true });
+      }
     }
   })();
   return loadPromise;
+}
+
+async function handleBackgroundRefresh() {
+  if (draggingTask.value) {
+    pendingRefreshAfterDrag = true;
+    return;
+  }
+  await load({ initial: false, silent: true });
 }
 
 async function addTask() {
@@ -248,7 +364,7 @@ function queueOrderSave() {
     .catch(async (error) => {
       console.error(error);
       announce("位置保存失败，已恢复原顺序");
-      await load();
+      await load({ initial: false, silent: true });
       return false;
     });
   return orderQueue;
@@ -314,7 +430,7 @@ async function saveChanges(taskId: string, changes: TaskChanges) {
     if (shouldRepeat) {
       await orderQueue;
       await createRecurringSuccessor(task);
-      await load();
+      await load({ initial: false, silent: true });
       announce("任务已完成，下一次任务已加入就绪");
       return;
     }
@@ -348,7 +464,7 @@ async function toggleTask(task: Task) {
 }
 
 async function handleTaskCreated(event: Event<string | null>) {
-  await load();
+  await load({ initial: false, silent: true });
   if (event.payload) await openTask(event.payload);
 }
 
@@ -439,7 +555,7 @@ async function removeTask(taskId: string) {
   } catch (error) {
     console.error(error);
     announce("删除失败，请重试");
-    await load();
+    await load({ initial: false, silent: true });
   } finally {
     saving.value = false;
   }
@@ -508,6 +624,11 @@ async function handleTaskDrop(result: { taskId: string; intoTrash: boolean }) {
   draggingTask.value = false;
   stopTrashTracking();
 
+  if (pendingRefreshAfterDrag) {
+    pendingRefreshAfterDrag = false;
+    await load({ initial: false, silent: true });
+  }
+
   if (result.intoTrash) {
     // Deleting is decided here and nowhere else, so a card released over the
     // delete zone can never stay behind in the column beneath it.
@@ -529,7 +650,7 @@ async function handleTaskDrop(result: { taskId: string; intoTrash: boolean }) {
   const movedTask = findTask(result.taskId);
   if (saved && origin?.columnId !== "done" && movedTask?.columnId === "done" && movedTask.recurrenceRule !== "none") {
     await createRecurringSuccessor(movedTask);
-    await load();
+    await load({ initial: false, silent: true });
     announce("任务已完成，下一次任务已加入就绪");
   }
   nextTick(() => {
@@ -617,11 +738,11 @@ async function undoDelete() {
   saving.value = true;
   try {
     await restoreTask(pending.task.id);
-    await load();
+    await load({ initial: false, silent: true });
     announce("已撤回删除");
   } catch (error) {
     console.error(error);
-    await load();
+    await load({ initial: false, silent: true });
     announce("撤回失败，请从回收站恢复");
   } finally {
     saving.value = false;
@@ -632,7 +753,7 @@ async function restoreDeletedTask(task: DeletedTask) {
   saving.value = true;
   try {
     await restoreTask(task.id);
-    await load();
+    await load({ initial: false, silent: true });
     announce(`已恢复：${task.title}`);
   } catch (error) {
     console.error(error);
@@ -705,18 +826,18 @@ onMounted(async () => {
   window.addEventListener("drop", handleInternalDrop, true);
   unlistenTaskCreated = await listen<string | null>("task-created", handleTaskCreated);
   unlistenMcpTaskUpdated = await listen("mcp:task-updated", async () => {
-    await load();
+    await handleBackgroundRefresh();
   });
   unlistenMcpTaskBlocked = await listen<{ taskId: string; title: string; reason: string; detail: string }>(
     "mcp:task-blocked",
     async (event) => {
       announce(`任务【${event.payload.title}】出现阻塞：${event.payload.detail}`);
-      await load();
+      await handleBackgroundRefresh();
     },
   );
   unlistenOpenTask = await listen<string>("open-task", async (event) => {
     if (event.payload) {
-      await load();
+      await load({ initial: false, silent: true });
       await openTask(event.payload);
     }
   });
@@ -727,7 +848,7 @@ onMounted(async () => {
     toStatus: string;
     detail?: string;
   }>("mcp:status-transition", async (event) => {
-    await load();
+    await handleBackgroundRefresh();
     const statusMap: Record<string, string> = {
       todo: "收集箱",
       backlog: "待办池",
@@ -744,14 +865,14 @@ onMounted(async () => {
     notificationActionListener = await onAction(async (action) => {
       const taskId = (action.notification?.extra?.taskId as string) || undefined;
       if (taskId) {
-        await load();
+        await load({ initial: false, silent: true });
         await openTask(taskId);
       }
     });
   } catch {
     // onAction may not be available in non-desktop environments or testing
   }
-  await load();
+  await load({ initial: true });
   try {
     const pendingTaskId = await invoke<string | null>("get_pending_open_task");
     if (pendingTaskId) {
@@ -827,9 +948,9 @@ onBeforeUnmount(() => {
     </header>
 
     <div v-if="loading" class="system-state" role="status">正在打开本地任务墙…</div>
-    <div v-else-if="errorMessage" class="system-state system-state--error" role="alert">
+    <div v-else-if="errorMessage && !hasLoadedOnce" class="system-state system-state--error" role="alert">
       <p>{{ errorMessage }}</p>
-      <button class="secondary-button" type="button" @click="load">重试</button>
+      <button class="secondary-button" type="button" @click="() => load({ initial: true })">重试</button>
     </div>
     <main v-else class="wall-workspace">
       <ProjectSidebar

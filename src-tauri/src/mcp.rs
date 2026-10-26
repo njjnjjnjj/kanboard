@@ -708,9 +708,9 @@ impl KanboardMcp {
         Self { database_path, app }
     }
 
-    fn emit_task_updated(&self) {
+    fn emit_task_updated(&self, task_id: Option<&str>) {
         if let Some(app) = &self.app {
-            let _ = app.emit("mcp:task-updated", ());
+            let _ = app.emit("mcp:task-updated", json!({ "taskId": task_id }));
         }
     }
 
@@ -1094,7 +1094,7 @@ impl KanboardMcp {
         let updated_task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
         pool.close().await;
 
-        self.emit_task_updated();
+        self.emit_task_updated(Some(&input.task_id));
         if status_changed {
             let detail = if is_blocked {
                 input.comment.as_deref().or(blocked_reason.as_deref())
@@ -1177,7 +1177,7 @@ impl KanboardMcp {
         let updated_task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
         pool.close().await;
 
-        self.emit_task_updated();
+        self.emit_task_updated(Some(&input.task_id));
         self.notify_status_transition(
             &input.task_id,
             &task.title,
@@ -1249,7 +1249,7 @@ impl KanboardMcp {
         let updated_task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
         pool.close().await;
 
-        self.emit_task_updated();
+        self.emit_task_updated(Some(&input.task_id));
         self.notify_status_transition(
             &input.task_id,
             &task.title,
@@ -1297,7 +1297,7 @@ impl KanboardMcp {
         let updated_task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
         pool.close().await;
 
-        self.emit_task_updated();
+        self.emit_task_updated(Some(&input.task_id));
         structured(json!({ "task": updated_task }))
     }
 
@@ -1339,7 +1339,7 @@ impl KanboardMcp {
         let updated_task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
         pool.close().await;
 
-        self.emit_task_updated();
+        self.emit_task_updated(Some(&input.task_id));
         structured(json!({ "task": updated_task }))
     }
 
@@ -1368,7 +1368,7 @@ impl KanboardMcp {
         let updated_project = projects.into_iter().find(|p| p.get("id").and_then(Value::as_str) == Some(&input.project_id));
         pool.close().await;
 
-        self.emit_task_updated();
+        self.emit_task_updated(None);
         structured(json!({ "project": updated_project }))
     }
 

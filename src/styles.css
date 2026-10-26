@@ -878,6 +878,41 @@ kbd {
 .task-inspector__tabs button { min-height: 38px; padding: 0 2px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); background: transparent; cursor: pointer; font-size: 13px; }
 .task-inspector__tabs button[aria-selected="true"] { border-bottom-color: var(--accent); color: var(--ink-strong); font-weight: 700; }
 .task-inspector__tabs button span { margin-left: 4px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.conflict-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  border-left: 3px solid var(--amber);
+  background: #f5eee2;
+  color: #76521b;
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: 4px;
+}
+.conflict-banner span {
+  flex: 1;
+}
+.conflict-banner__actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.conflict-banner__actions button {
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 4px;
+  border: 1px solid var(--amber);
+  background: #fff;
+  color: #76521b;
+}
+.conflict-banner__actions button:hover {
+  background: #fbf8f3;
+}
 .task-inspector__panel {
   min-height: 0;
   margin: 0 -22px;

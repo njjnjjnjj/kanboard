@@ -75,6 +75,48 @@ const draft = reactive<TaskChanges>({
   reviewNotes: "",
 });
 
+interface DraftSnapshot {
+  title: string;
+  description: string;
+  dueDate: string | null;
+  priority: "none" | "high";
+  columnId: string;
+  projectId: string | null;
+  tagNames: string[];
+  blockedReason: BlockedReason | null;
+  checklist: TaskChanges["checklist"];
+  recurrenceRule: string;
+  reviewNotes: string;
+}
+
+const baseSnapshot = ref<DraftSnapshot | null>(null);
+const hasDescriptionConflict = ref(false);
+const externalDescription = ref("");
+const hasReviewNotesConflict = ref(false);
+const externalReviewNotes = ref("");
+
+function acceptExternalDescription() {
+  draft.description = externalDescription.value;
+  if (baseSnapshot.value) baseSnapshot.value.description = externalDescription.value;
+  hasDescriptionConflict.value = false;
+}
+
+function ignoreDescriptionConflict() {
+  if (baseSnapshot.value) baseSnapshot.value.description = externalDescription.value;
+  hasDescriptionConflict.value = false;
+}
+
+function acceptExternalReviewNotes() {
+  draft.reviewNotes = externalReviewNotes.value;
+  if (baseSnapshot.value) baseSnapshot.value.reviewNotes = externalReviewNotes.value;
+  hasReviewNotesConflict.value = false;
+}
+
+function ignoreReviewNotesConflict() {
+  if (baseSnapshot.value) baseSnapshot.value.reviewNotes = externalReviewNotes.value;
+  hasReviewNotesConflict.value = false;
+}
+
 function openFullscreenDescription() {
   fullscreenTarget.value = "description";
 }
@@ -112,26 +154,144 @@ watch(
   () => props.task,
   (task, previousTask) => {
     confirmingDelete.value = false;
-    if (!previousTask || task.id !== previousTask.id) {
+    const isDifferentTask = !previousTask || task.id !== previousTask.id;
+    if (isDifferentTask) {
+      hasDescriptionConflict.value = false;
+      externalDescription.value = "";
+      hasReviewNotesConflict.value = false;
+      externalReviewNotes.value = "";
       activeTab.value = task.columnId === "verify" ? "verification" : "details";
+
+      draft.title = task.title;
+      draft.description = task.description;
+      draft.dueDate = task.dueDate;
+      draft.priority = task.priority;
+      draft.columnId = task.columnId;
+      draft.projectId = task.projectId;
+      draft.tagNames = task.tags.map((tag) => tag.name);
+      draft.blockedReason = task.blockedReason;
+      draft.checklist = task.checklist.map((item) => ({ ...item }));
+      draft.recurrenceRule = task.recurrenceRule;
+      draft.reviewNotes = task.reviewNotes || "";
+
+      baseSnapshot.value = {
+        title: draft.title,
+        description: draft.description,
+        dueDate: draft.dueDate,
+        priority: draft.priority,
+        columnId: draft.columnId,
+        projectId: draft.projectId,
+        tagNames: [...draft.tagNames],
+        blockedReason: draft.blockedReason,
+        checklist: draft.checklist.map((item) => ({ ...item })),
+        recurrenceRule: draft.recurrenceRule,
+        reviewNotes: draft.reviewNotes,
+      };
+      return;
     }
-    draft.title = task.title;
-    draft.description = task.description;
-    draft.dueDate = task.dueDate;
-    draft.priority = task.priority;
-    draft.columnId = task.columnId;
-    draft.projectId = task.projectId;
-    draft.tagNames = task.tags.map((tag) => tag.name);
-    draft.blockedReason = task.blockedReason;
-    draft.checklist = task.checklist.map((item) => ({ ...item }));
-    draft.recurrenceRule = task.recurrenceRule;
-    draft.reviewNotes = task.reviewNotes || "";
+
+    // Same task: preserve dirty fields so user input is never wiped out during refresh
+    const base = baseSnapshot.value;
+    if (!base) return;
+
+    // Description:
+    const descDirty = draft.description !== base.description;
+    if (!descDirty) {
+      draft.description = task.description;
+      base.description = task.description;
+      hasDescriptionConflict.value = false;
+    } else if (task.description !== base.description && task.description !== draft.description) {
+      hasDescriptionConflict.value = true;
+      externalDescription.value = task.description;
+    }
+
+    // Review notes:
+    const notesDirty = draft.reviewNotes !== base.reviewNotes;
+    if (!notesDirty) {
+      draft.reviewNotes = task.reviewNotes || "";
+      base.reviewNotes = task.reviewNotes || "";
+      hasReviewNotesConflict.value = false;
+    } else if ((task.reviewNotes || "") !== base.reviewNotes && (task.reviewNotes || "") !== draft.reviewNotes) {
+      hasReviewNotesConflict.value = true;
+      externalReviewNotes.value = task.reviewNotes || "";
+    }
+
+    // Title:
+    const titleDirty = draft.title !== base.title;
+    if (!titleDirty) {
+      draft.title = task.title;
+      base.title = task.title;
+    }
+
+    // Column ID:
+    const columnDirty = draft.columnId !== base.columnId;
+    if (!columnDirty) {
+      if (task.columnId !== base.columnId) {
+        draft.columnId = task.columnId;
+        base.columnId = task.columnId;
+        if (task.columnId === "verify" && activeTab.value !== "verification") {
+          activeTab.value = "verification";
+        }
+      }
+    }
+
+    // Checklist:
+    const checklistDirty = JSON.stringify(draft.checklist) !== JSON.stringify(base.checklist);
+    if (!checklistDirty) {
+      draft.checklist = task.checklist.map((item) => ({ ...item }));
+      base.checklist = task.checklist.map((item) => ({ ...item }));
+    }
+
+    // Due date:
+    if (draft.dueDate === base.dueDate) {
+      draft.dueDate = task.dueDate;
+      base.dueDate = task.dueDate;
+    }
+
+    // Priority:
+    if (draft.priority === base.priority) {
+      draft.priority = task.priority;
+      base.priority = task.priority;
+    }
+
+    // Project:
+    if (draft.projectId === base.projectId) {
+      draft.projectId = task.projectId;
+      base.projectId = task.projectId;
+    }
+
+    // Blocked reason:
+    if (draft.blockedReason === base.blockedReason) {
+      draft.blockedReason = task.blockedReason;
+      base.blockedReason = task.blockedReason;
+    }
+
+    // Recurrence rule:
+    if (draft.recurrenceRule === base.recurrenceRule) {
+      draft.recurrenceRule = task.recurrenceRule;
+      base.recurrenceRule = task.recurrenceRule;
+    }
+
+    // Tags:
+    if (JSON.stringify(draft.tagNames) === JSON.stringify(base.tagNames)) {
+      draft.tagNames = task.tags.map((tag) => tag.name);
+      base.tagNames = [...draft.tagNames];
+    }
   },
   { immediate: true, deep: true },
 );
 
 function submit() {
   if (!draft.title.trim()) return;
+  if (baseSnapshot.value) {
+    baseSnapshot.value = {
+      ...draft,
+      tagNames: [...draft.tagNames],
+      checklist: draft.checklist.map((item) => ({ ...item })),
+    };
+  }
+  hasDescriptionConflict.value = false;
+  hasReviewNotesConflict.value = false;
   emit("save", props.task.id, {
     ...draft,
     title: draft.title.trim(),
@@ -292,6 +452,14 @@ async function handleTabKeydown(event: KeyboardEvent) {
             <span>任务说明</span>
           </div>
 
+          <div v-if="hasDescriptionConflict" class="conflict-banner" role="alert">
+            <span>任务说明已有外部更新，已保留您当前编辑的草稿。</span>
+            <div class="conflict-banner__actions">
+              <button type="button" class="text-button" @click="acceptExternalDescription">使用外部最新版本</button>
+              <button type="button" class="text-button" @click="ignoreDescriptionConflict">保留当前草稿</button>
+            </div>
+          </div>
+
           <MarkdownEditor
             v-model="draft.description"
             label="任务说明"
@@ -315,6 +483,14 @@ async function handleTabKeydown(event: KeyboardEvent) {
         role="tabpanel"
         aria-labelledby="task-verification-tab"
       >
+        <div v-if="hasReviewNotesConflict" class="conflict-banner" role="alert">
+          <span>验证方案已有外部更新，已保留您当前编辑的草稿。</span>
+          <div class="conflict-banner__actions">
+            <button type="button" class="text-button" @click="acceptExternalReviewNotes">使用外部最新版本</button>
+            <button type="button" class="text-button" @click="ignoreReviewNotesConflict">保留当前草稿</button>
+          </div>
+        </div>
+
         <div v-if="draft.columnId === 'verify'" class="task-verification__toolbar">
           <span>当前任务等待人工核验</span>
           <button

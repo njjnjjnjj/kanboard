@@ -13,12 +13,16 @@ const openTaskListener = vi.hoisted(() => ({
 const mcpStatusTransitionListener = vi.hoisted(() => ({
   value: undefined as undefined | ((event: { payload: any }) => void | Promise<void>),
 }));
+const mcpTaskUpdatedListener = vi.hoisted(() => ({
+  value: undefined as undefined | ((event?: { payload?: any }) => void | Promise<void>),
+}));
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async (event: string, listener: any) => {
     if (event === "task-created") taskCreatedListener.value = listener;
     if (event === "open-task") openTaskListener.value = listener;
     if (event === "mcp:status-transition") mcpStatusTransitionListener.value = listener;
+    if (event === "mcp:task-updated") mcpTaskUpdatedListener.value = listener;
     return vi.fn();
   }),
 }));
@@ -91,6 +95,7 @@ describe("personal task wall", () => {
     taskCreatedListener.value = undefined;
     openTaskListener.value = undefined;
     mcpStatusTransitionListener.value = undefined;
+    mcpTaskUpdatedListener.value = undefined;
     repository.loadTaskWall.mockResolvedValue(wall());
     repository.loadProjects.mockResolvedValue([]);
     repository.loadTags.mockResolvedValue([]);
@@ -510,6 +515,66 @@ describe("personal task wall", () => {
 
     expect(wrapper.find(".task-drawer-layer").exists()).toBe(true);
     expect((wrapper.get("[data-inspector-title]").element as HTMLInputElement).value).toBe("整理个人任务");
+    wrapper.unmount();
+  });
+
+  it("preserves uncommitted description draft during mcp background refresh and does not flicker workspace", async () => {
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+
+    // Select task-1 and start editing description
+    await wrapper.get("[data-task-id='task-1']").trigger("click");
+    await flushPromises();
+
+    const descTextarea = wrapper.get("[data-inspector-description]");
+    await descTextarea.setValue("正在编辑的重要说明，不能被后台刷新覆盖");
+    expect((descTextarea.element as HTMLTextAreaElement).value).toBe("正在编辑的重要说明，不能被后台刷新覆盖");
+
+    // Simulate an MCP status transition or task update arriving in background
+    const updatedWall = wall();
+    const taskInDb = updatedWall[0].tasks.find((t) => t.id === "task-1")!;
+    taskInDb.columnId = "verify";
+    repository.loadTaskWall.mockResolvedValue(updatedWall);
+
+    await mcpStatusTransitionListener.value?.({
+      payload: {
+        taskId: "task-1",
+        title: "整理个人任务",
+        fromStatus: "todo",
+        toStatus: "verify",
+      },
+    });
+    await flushPromises();
+
+    // Workspace main is STILL mounted (no flicker / unmounting)
+    expect(wrapper.find(".wall-workspace").exists()).toBe(true);
+    expect(wrapper.find(".system-state").exists()).toBe(false);
+
+    // Inspector remains open and uncommitted draft description is preserved
+    expect(wrapper.find(".task-drawer-layer").exists()).toBe(true);
+    expect((descTextarea.element as HTMLTextAreaElement).value).toBe("正在编辑的重要说明，不能被后台刷新覆盖");
+    expect(wrapper.find(".task-inspector__header span").text()).toBe("待验证");
+    wrapper.unmount();
+  });
+
+  it("reconciles board columns in-place on refresh without unmounting wall-workspace", async () => {
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+
+    const initialWorkspace = wrapper.find(".wall-workspace").element;
+
+    // Simulate background mcp:task-updated event
+    const updatedWall = wall();
+    updatedWall[0].tasks[0].title = "整理个人任务 (已更新)";
+    repository.loadTaskWall.mockResolvedValue(updatedWall);
+
+    await mcpTaskUpdatedListener.value?.();
+    await flushPromises();
+
+    // The main wall-workspace DOM element is preserved (not remounted or flickered)
+    expect(wrapper.find(".wall-workspace").exists()).toBe(true);
+    expect(wrapper.find(".wall-workspace").element).toBe(initialWorkspace);
+    expect(wrapper.text()).toContain("整理个人任务 (已更新)");
     wrapper.unmount();
   });
 });

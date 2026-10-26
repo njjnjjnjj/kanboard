@@ -166,4 +166,132 @@ describe("TaskInspector verification tab", () => {
     expect(wrapper.emitted("close")).toBeFalsy();
     wrapper.unmount();
   });
+
+  it("preserves draft description when props.task updates on the same task", async () => {
+    const wrapper = mount(TaskInspector, {
+      props: {
+        task: mockTask,
+        columns,
+        projects: [],
+        tags: [],
+        saving: false,
+      },
+    });
+
+    const textarea = wrapper.find("textarea[data-inspector-description]");
+    await textarea.setValue("正在本地编辑的任务说明");
+    expect((textarea.element as HTMLTextAreaElement).value).toBe("正在本地编辑的任务说明");
+
+    // Background refresh occurs for the same task
+    await wrapper.setProps({
+      task: {
+        ...mockTask,
+        columnId: "verify",
+      },
+    });
+    await wrapper.vm.$nextTick();
+
+    // Draft description must NOT be overwritten
+    expect((textarea.element as HTMLTextAreaElement).value).toBe("正在本地编辑的任务说明");
+    wrapper.unmount();
+  });
+
+  it("displays conflict banner and allows accepting external description when external content changes while draft is dirty", async () => {
+    const wrapper = mount(TaskInspector, {
+      props: {
+        task: mockTask,
+        columns,
+        projects: [],
+        tags: [],
+        saving: false,
+      },
+    });
+
+    const textarea = wrapper.find("textarea[data-inspector-description]");
+    await textarea.setValue("本地输入的内容");
+
+    // External agent appends notes to task description
+    await wrapper.setProps({
+      task: {
+        ...mockTask,
+        description: "外部追加的最新说明",
+      },
+    });
+    await wrapper.vm.$nextTick();
+
+    // Local edits are preserved
+    expect((textarea.element as HTMLTextAreaElement).value).toBe("本地输入的内容");
+
+    // Conflict banner appears
+    const banner = wrapper.find(".field--description .conflict-banner");
+    expect(banner.exists()).toBe(true);
+    expect(banner.text()).toContain("任务说明已有外部更新");
+
+    // User accepts external update
+    const acceptBtn = banner.findAll("button")[0];
+    await acceptBtn.trigger("click");
+    await wrapper.vm.$nextTick();
+
+    expect((textarea.element as HTMLTextAreaElement).value).toBe("外部追加的最新说明");
+    expect(wrapper.find(".field--description .conflict-banner").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("automatically syncs external description when user has not edited description", async () => {
+    const wrapper = mount(TaskInspector, {
+      props: {
+        task: mockTask,
+        columns,
+        projects: [],
+        tags: [],
+        saving: false,
+      },
+    });
+
+    const textarea = wrapper.find("textarea[data-inspector-description]");
+    expect((textarea.element as HTMLTextAreaElement).value).toBe("需求描述");
+
+    // Background update without user having edited
+    await wrapper.setProps({
+      task: {
+        ...mockTask,
+        description: "由 Agent 补充的完整背景说明",
+      },
+    });
+    await wrapper.vm.$nextTick();
+
+    expect((textarea.element as HTMLTextAreaElement).value).toBe("由 Agent 补充的完整背景说明");
+    expect(wrapper.find(".field--description .conflict-banner").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("syncs column status while preserving uncommitted description edits", async () => {
+    const wrapper = mount(TaskInspector, {
+      props: {
+        task: { ...mockTask, columnId: "doing" },
+        columns,
+        projects: [],
+        tags: [],
+        saving: false,
+      },
+    });
+
+    const textarea = wrapper.find("textarea[data-inspector-description]");
+    await textarea.setValue("正在开发中记录的笔记");
+
+    // Agent finishes task and moves it to verify
+    await wrapper.setProps({
+      task: {
+        ...mockTask,
+        columnId: "verify",
+      },
+    });
+    await wrapper.vm.$nextTick();
+
+    // Status header and select are updated to 待验证
+    expect(wrapper.find(".task-inspector__header span").text()).toBe("待验证");
+    // Description remains intact
+    expect((textarea.element as HTMLTextAreaElement).value).toBe("正在开发中记录的笔记");
+    wrapper.unmount();
+  });
 });
