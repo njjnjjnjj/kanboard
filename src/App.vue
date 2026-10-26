@@ -23,6 +23,7 @@ import {
   restoreTask,
   saveTaskOrder,
   saveProject,
+  sortDoneTasks,
   trashTask,
   updateTask,
 } from "./data/taskRepository";
@@ -98,11 +99,17 @@ function matchesScope(task: Task) {
 }
 
 const visibleColumns = computed(() =>
-  columns.value.map((column) => ({
-    ...column,
-    totalTaskCount: column.tasks.length,
-    tasks: column.tasks.filter(isVisibleTask),
-  })),
+  columns.value.map((column) => {
+    let colTasks = column.tasks.filter(isVisibleTask);
+    if (column.id === "done") {
+      colTasks = sortDoneTasks([...colTasks]);
+    }
+    return {
+      ...column,
+      totalTaskCount: column.tasks.length,
+      tasks: colTasks,
+    };
+  }),
 );
 
 const swimlanes = computed(() => {
@@ -114,11 +121,17 @@ const swimlanes = computed(() => {
   }
   return lanes.map((lane) => ({
     ...lane,
-    columns: columns.value.map((column) => ({
-      ...column,
-      totalTaskCount: column.tasks.filter((task) => task.projectId === lane.projectId).length,
-      tasks: column.tasks.filter((task) => task.projectId === lane.projectId && isVisibleTask(task)),
-    })),
+    columns: columns.value.map((column) => {
+      let laneTasks = column.tasks.filter((task) => task.projectId === lane.projectId && isVisibleTask(task));
+      if (column.id === "done") {
+        laneTasks = sortDoneTasks([...laneTasks]);
+      }
+      return {
+        ...column,
+        totalTaskCount: column.tasks.filter((task) => task.projectId === lane.projectId).length,
+        tasks: laneTasks,
+      };
+    }),
   }));
 });
 
@@ -201,6 +214,9 @@ function reconcileColumns(currentColumns: TaskColumn[], newColumns: TaskColumn[]
       } else {
         nextTasks.push(freshTask);
       }
+    }
+    if (col.id === "done") {
+      sortDoneTasks(nextTasks);
     }
     col.tasks = nextTasks;
   }
@@ -400,7 +416,13 @@ async function saveChanges(taskId: string, changes: TaskChanges) {
     if (moved) {
       const removed = removeTaskFromWall(taskId);
       const target = columns.value.find((column) => column.id === changes.columnId);
-      if (removed && target) target.tasks.push(removed);
+      if (removed && target) {
+        if (target.id === "done") {
+          target.tasks.unshift(removed);
+        } else {
+          target.tasks.push(removed);
+        }
+      }
     }
     const { tagNames: _tagNames, ...taskChanges } = changes;
     Object.assign(task, taskChanges, {
@@ -426,6 +448,10 @@ async function saveChanges(taskId: string, changes: TaskChanges) {
       if (!tags.value.some((item) => item.id === tag.id)) tags.value.push(tag);
     }
     tags.value.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+    if (changes.columnId === "done") {
+      const doneCol = columns.value.find((c) => c.id === "done");
+      if (doneCol) sortDoneTasks(doneCol.tasks);
+    }
     if (moved) queueOrderSave();
     if (shouldRepeat) {
       await orderQueue;

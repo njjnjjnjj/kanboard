@@ -64,6 +64,17 @@ interface ChecklistRow {
   position: number;
 }
 
+export function compareDoneTasks(a: Task, b: Task): number {
+  const timeA = a.completedAt ? Date.parse(a.completedAt) : (a.updatedAt ? Date.parse(a.updatedAt) : 0);
+  const timeB = b.completedAt ? Date.parse(b.completedAt) : (b.updatedAt ? Date.parse(b.updatedAt) : 0);
+  if (timeB !== timeA) return timeB - timeA;
+  return (b.position ?? 0) - (a.position ?? 0);
+}
+
+export function sortDoneTasks<T extends Task>(tasks: T[]): T[] {
+  return tasks.sort(compareDoneTasks);
+}
+
 export async function loadTaskWall(): Promise<TaskColumn[]> {
   const db = await database();
   const [columns, taskRows, taskTags, checklistRows] = await Promise.all([
@@ -94,7 +105,9 @@ export async function loadTaskWall(): Promise<TaskColumn[]> {
          FROM tasks t
          LEFT JOIN projects p ON p.id = t.project_id
         WHERE t.deleted_at IS NULL
-        ORDER BY t.position`,
+        ORDER BY CASE WHEN t.column_id = 'done' THEN 0 ELSE 1 END,
+                 CASE WHEN t.column_id = 'done' THEN t.completed_at END DESC,
+                 t.position ASC`,
     ),
     db.select<TaskTagRow[]>(
       `SELECT tt.task_id AS taskId, tags.id, tags.name
@@ -123,10 +136,16 @@ export async function loadTaskWall(): Promise<TaskColumn[]> {
       .map((item) => ({ ...item, completed: Boolean(item.completed) })),
   }));
 
-  return columns.map((column) => ({
-    ...column,
-    tasks: tasks.filter((task) => task.columnId === column.id),
-  }));
+  return columns.map((column) => {
+    let colTasks = tasks.filter((task) => task.columnId === column.id);
+    if (column.id === "done") {
+      colTasks = sortDoneTasks(colTasks);
+    }
+    return {
+      ...column,
+      tasks: colTasks,
+    };
+  });
 }
 
 export async function loadDeletedTasks(): Promise<DeletedTask[]> {
@@ -385,6 +404,14 @@ export async function saveTaskOrder(columns: TaskColumn[]): Promise<void> {
   const db = await database();
 
   for (const column of columns) {
+    if (column.id === "done") {
+      for (const task of column.tasks) {
+        if (!task.completedAt) {
+          task.completedAt = updatedAt;
+        }
+      }
+      sortDoneTasks(column.tasks);
+    }
     for (const [index, task] of column.tasks.entries()) {
       const position = (index + 1) * 1000;
       const completedAt = column.id === "done"

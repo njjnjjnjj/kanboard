@@ -885,6 +885,14 @@ impl KanboardMcp {
                 && input.due_before.as_ref().is_none_or(|value| task.due_date.as_ref().is_some_and(|date| date <= value))
                 && input.tag.as_ref().is_none_or(|value| task.tags.iter().any(|tag| tag.name.eq_ignore_ascii_case(value)))
         });
+        if input.status.as_deref() == Some("done") {
+            tasks.sort_by(|a, b| {
+                b.completed_at
+                    .as_deref()
+                    .unwrap_or(b.updated_at.as_str())
+                    .cmp(a.completed_at.as_deref().unwrap_or(a.updated_at.as_str()))
+            });
+        }
         let total = tasks.len();
         tasks.truncate(input.limit.unwrap_or(50).clamp(1, 200));
         structured(json!({ "total": total, "tasks": tasks }))
@@ -1531,7 +1539,7 @@ async fn load_task_by_id(pool: &SqlitePool, task_id: &str) -> Result<Option<Task
 
 async fn load_all_tasks(pool: &SqlitePool) -> Result<Vec<TaskData>, sqlx::Error> {
     let task_rows = sqlx::query(
-        "SELECT t.id, t.column_id, t.project_id, p.name AS project_name, p.color AS project_color, p.path AS project_path, t.title, t.description, t.due_date, t.priority, t.position, t.completed_at, t.started_at, t.blocked_reason, t.blocked_since, t.recurrence_rule, t.review_notes, t.in_agent_sop, t.created_at, t.updated_at, t.deleted_at FROM tasks t LEFT JOIN projects p ON p.id = t.project_id ORDER BY t.position",
+        "SELECT t.id, t.column_id, t.project_id, p.name AS project_name, p.color AS project_color, p.path AS project_path, t.title, t.description, t.due_date, t.priority, t.position, t.completed_at, t.started_at, t.blocked_reason, t.blocked_since, t.recurrence_rule, t.review_notes, t.in_agent_sop, t.created_at, t.updated_at, t.deleted_at FROM tasks t LEFT JOIN projects p ON p.id = t.project_id ORDER BY CASE WHEN t.column_id = 'done' THEN 0 ELSE 1 END, CASE WHEN t.column_id = 'done' THEN t.completed_at END DESC, t.position ASC",
     )
     .fetch_all(pool)
     .await?;

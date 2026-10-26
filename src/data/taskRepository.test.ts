@@ -81,6 +81,158 @@ describe("task repository ordering", () => {
     expect(columns[0]!.tasks[0]!.inAgentSop).toBe(false);
   });
 
+  it("orders done tasks by completedAt descending when saving task order", async () => {
+    const columns: TaskColumn[] = [
+      {
+        id: "done",
+        title: "已完成",
+        position: 7000,
+        wipLimit: null,
+        tasks: [
+          {
+            id: "task-earlier",
+            columnId: "done",
+            projectId: null,
+            project: null,
+            tags: [],
+            title: "先完成的任务",
+            description: "",
+            dueDate: null,
+            priority: "none",
+            position: 1000,
+            completedAt: "2026-10-26T08:00:00.000Z",
+            startedAt: null,
+            blockedReason: null,
+            blockedSince: null,
+            checklist: [],
+            recurrenceRule: "none",
+            reviewNotes: "",
+            inAgentSop: false,
+            createdAt: "2026-10-26T07:00:00.000Z",
+            updatedAt: "2026-10-26T08:00:00.000Z",
+          },
+          {
+            id: "task-later",
+            columnId: "done",
+            projectId: null,
+            project: null,
+            tags: [],
+            title: "后完成的任务",
+            description: "",
+            dueDate: null,
+            priority: "none",
+            position: 2000,
+            completedAt: "2026-10-26T10:00:00.000Z",
+            startedAt: null,
+            blockedReason: null,
+            blockedSince: null,
+            checklist: [],
+            recurrenceRule: "none",
+            reviewNotes: "",
+            inAgentSop: false,
+            createdAt: "2026-10-26T07:00:00.000Z",
+            updatedAt: "2026-10-26T10:00:00.000Z",
+          },
+        ],
+      },
+    ];
+
+    await saveTaskOrder(columns);
+
+    // Later completed task must be placed at the top (index 0, position 1000)
+    expect(columns[0].tasks[0].id).toBe("task-later");
+    expect(columns[0].tasks[0].position).toBe(1000);
+    expect(columns[0].tasks[1].id).toBe("task-earlier");
+    expect(columns[0].tasks[1].position).toBe(2000);
+  });
+});
+
+describe("task wall loading and sorting", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("sorts completed tasks in descending order of completedAt", async () => {
+    database.select
+      .mockResolvedValueOnce([{ id: "done", title: "已完成", position: 7000, wipLimit: null }])
+      .mockResolvedValueOnce([
+        {
+          id: "task-1",
+          columnId: "done",
+          projectId: null,
+          projectName: null,
+          projectColor: null,
+          projectPath: null,
+          title: "早上完成",
+          description: "",
+          dueDate: null,
+          priority: "none",
+          position: 1000,
+          completedAt: "2026-10-26T08:00:00.000Z",
+          startedAt: null,
+          blockedReason: null,
+          blockedSince: null,
+          recurrenceRule: "none",
+          reviewNotes: "",
+          inAgentSop: 0,
+          createdAt: "2026-10-26T07:00:00.000Z",
+          updatedAt: "2026-10-26T08:00:00.000Z",
+        },
+        {
+          id: "task-2",
+          columnId: "done",
+          projectId: null,
+          projectName: null,
+          projectColor: null,
+          projectPath: null,
+          title: "下午完成",
+          description: "",
+          dueDate: null,
+          priority: "none",
+          position: 2000,
+          completedAt: "2026-10-26T14:00:00.000Z",
+          startedAt: null,
+          blockedReason: null,
+          blockedSince: null,
+          recurrenceRule: "none",
+          reviewNotes: "",
+          inAgentSop: 0,
+          createdAt: "2026-10-26T07:00:00.000Z",
+          updatedAt: "2026-10-26T14:00:00.000Z",
+        },
+        {
+          id: "task-3",
+          columnId: "done",
+          projectId: null,
+          projectName: null,
+          projectColor: null,
+          projectPath: null,
+          title: "中午完成",
+          description: "",
+          dueDate: null,
+          priority: "none",
+          position: 3000,
+          completedAt: "2026-10-26T12:00:00.000Z",
+          startedAt: null,
+          blockedReason: null,
+          blockedSince: null,
+          recurrenceRule: "none",
+          reviewNotes: "",
+          inAgentSop: 0,
+          createdAt: "2026-10-26T07:00:00.000Z",
+          updatedAt: "2026-10-26T12:00:00.000Z",
+        },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    const columns = await loadTaskWall();
+
+    expect(columns[0].tasks.map((t) => t.id)).toEqual(["task-2", "task-3", "task-1"]);
+    expect(columns[0].tasks[0].title).toBe("下午完成");
+    expect(columns[0].tasks[1].title).toBe("中午完成");
+    expect(columns[0].tasks[2].title).toBe("早上完成");
+  });
 });
 
 describe("task project and tag persistence", () => {

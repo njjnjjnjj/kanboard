@@ -50,6 +50,19 @@ const repository = vi.hoisted(() => ({
   createRecurringSuccessor: vi.fn(),
   restoreTask: vi.fn(),
   trashTask: vi.fn(),
+  sortDoneTasks: (tasks: any[]) =>
+    tasks.sort((a, b) => {
+      const timeA = a.completedAt ? Date.parse(a.completedAt) : a.updatedAt ? Date.parse(a.updatedAt) : 0;
+      const timeB = b.completedAt ? Date.parse(b.completedAt) : b.updatedAt ? Date.parse(b.updatedAt) : 0;
+      if (timeB !== timeA) return timeB - timeA;
+      return (b.position ?? 0) - (a.position ?? 0);
+    }),
+  compareDoneTasks: (a: any, b: any) => {
+    const timeA = a.completedAt ? Date.parse(a.completedAt) : a.updatedAt ? Date.parse(a.updatedAt) : 0;
+    const timeB = b.completedAt ? Date.parse(b.completedAt) : b.updatedAt ? Date.parse(b.updatedAt) : 0;
+    if (timeB !== timeA) return timeB - timeA;
+    return (b.position ?? 0) - (a.position ?? 0);
+  },
 }));
 
 vi.mock("./data/taskRepository", () => repository);
@@ -575,6 +588,41 @@ describe("personal task wall", () => {
     expect(wrapper.find(".wall-workspace").exists()).toBe(true);
     expect(wrapper.find(".wall-workspace").element).toBe(initialWorkspace);
     expect(wrapper.text()).toContain("整理个人任务 (已更新)");
+    wrapper.unmount();
+  });
+
+  it("places newly completed task at the top of the done column", async () => {
+    const initialWall = wall();
+    // Add an older completed task to done column
+    initialWall[6].tasks = [
+      {
+        ...existingTask,
+        id: "task-old-done",
+        columnId: "done",
+        title: "早先完成的任务",
+        completedAt: "2026-10-25T10:00:00.000Z",
+      },
+    ];
+    repository.loadTaskWall.mockResolvedValue(initialWall);
+
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+
+    // Select task-1 and mark it as done
+    await wrapper.get("[data-task-id='task-1']").trigger("click");
+    await flushPromises();
+
+    // Click status select to set to done
+    const statusSelect = wrapper.findAllComponents({ name: "TaskSelect" })[1];
+    await statusSelect.vm.$emit("update:modelValue", "done");
+    await wrapper.get(".task-inspector__form").trigger("submit");
+    await flushPromises();
+
+    // The done column cards should show task-1 first (at top) and task-old-done second
+    const doneColumn = wrapper.find(".board-column--done");
+    const cards = doneColumn.findAll(".task-card");
+    expect(cards[0].text()).toContain("整理个人任务");
+    expect(cards[1].text()).toContain("早先完成的任务");
     wrapper.unmount();
   });
 });
