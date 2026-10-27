@@ -132,8 +132,8 @@ function submit() {
           :task-title="draft.name"
           :data-project-memo="true"
           :document-preview="true"
-          :height="220"
-          :min-height="160"
+          :height="350"
+          :min-height="240"
           @toggle-fullscreen="fullscreen = true"
         />
       </div>
