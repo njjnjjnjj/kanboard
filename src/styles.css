@@ -1768,7 +1768,21 @@ kbd {
 .field--project-memo { display: flex; flex-direction: column; gap: 6px; margin: 0 0 16px; }
 .field--project-memo > span,
 .field--project-memo .field-header span { font-size: 14px; font-weight: 680; color: #4f5755; line-height: 1.35; }
-.field--project-memo .kanboard-markdown-editor { border-radius: 6px; }
+.field--project-memo .kanboard-markdown-editor { border-radius: 6px; height: auto !important; }
+.field--project-memo .kanboard-markdown-editor .vditor { height: auto !important; min-height: 0 !important; }
+/* 固定 5 行文本可视高度（每行约 23px * 5 + 24px 上下内边距 ≈ 140px），不使用动态伸缩 */
+.field--project-memo .kanboard-markdown-editor .vditor-content {
+  height: 140px !important;
+  min-height: 140px !important;
+  max-height: 140px !important;
+  flex: 0 0 140px !important;
+}
+.field--project-memo .kanboard-markdown-editor .vditor-ir {
+  height: 140px !important;
+  min-height: 140px !important;
+  max-height: 140px !important;
+  overflow-y: auto !important;
+}
 .project-editor > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 4px; }
 .project-editor > footer > div { display: flex; gap: 8px; }
 .project-editor > footer > .text-button { color: var(--red); }
