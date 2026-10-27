@@ -106,7 +106,7 @@ const visibleColumns = computed(() =>
     }
     return {
       ...column,
-      totalTaskCount: column.tasks.length,
+      totalTaskCount: column.tasks.filter(matchesScope).length,
       tasks: colTasks,
     };
   }),
@@ -680,8 +680,8 @@ async function handleTaskDrop(result: { taskId: string; intoTrash: boolean }) {
     announce("任务已完成，下一次任务已加入就绪");
   }
   nextTick(() => {
-    const exceeded = columns.value.find((column) =>
-      column.wipLimit !== null && column.tasks.length > column.wipLimit,
+    const exceeded = visibleColumns.value.find((column) =>
+      column.wipLimit !== null && (column.totalTaskCount ?? column.tasks.length) > column.wipLimit,
     );
     if (exceeded) announce(`${exceeded.title}已超过 WIP 上限，建议先完成一项`);
   });

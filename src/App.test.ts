@@ -293,6 +293,39 @@ describe("personal task wall", () => {
     wrapper.unmount();
   });
 
+  it("shows column header count scoped to the selected project instead of global count", async () => {
+    repository.loadProjects.mockResolvedValue([{
+      id: "project-1", name: "看板桌面版", color: "#285a78", description: "", targetDate: null,
+      status: "active", createdAt: "2026-09-16T00:00:00.000Z", updatedAt: "2026-09-16T00:00:00.000Z",
+    }]);
+    const projectWall = wall();
+    projectWall[0]!.tasks = [
+      { ...existingTask, id: "task-1", projectId: "project-1", project: { id: "project-1", name: "看板桌面版", color: "#285a78", path: "" } },
+      { ...existingTask, id: "task-2", projectId: null, project: null },
+    ];
+    projectWall.find((col) => col.id === "doing")!.tasks = [
+      { ...existingTask, id: "task-3", columnId: "doing", projectId: null, project: null },
+    ];
+    repository.loadTaskWall.mockResolvedValue(projectWall);
+
+    const wrapper = mount(App);
+    await flushPromises();
+
+    expect(wrapper.get("[data-column='todo'] .board-column__header").text()).toContain("2");
+    expect(wrapper.get("[data-column='doing'] .board-column__header").text()).toContain("1 / 2");
+
+    const projectButton = wrapper.findAll("button").find((button) => button.text().includes("看板桌面版"));
+    await projectButton?.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get("[data-column='todo'] .board-column__header").text()).toContain("1");
+    expect(wrapper.get("[data-column='doing'] .board-column__header").text()).toContain("0 / 2");
+    expect(wrapper.findAll("[data-column='todo'] .task-card")).toHaveLength(1);
+    expect(wrapper.findAll("[data-column='doing'] .task-card")).toHaveLength(0);
+
+    wrapper.unmount();
+  });
+
   it("moves a task to completed from its check control", async () => {
     const wrapper = mount(App);
     await flushPromises();
