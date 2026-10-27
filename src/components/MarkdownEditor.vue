@@ -14,6 +14,7 @@ const props = withDefaults(
     taskTitle?: string;
     dataInspectorDescription?: boolean;
     dataInspectorReviewNotes?: boolean;
+    dataProjectMemo?: boolean;
     height?: number | string;
     minHeight?: number;
     fullscreen?: boolean;
@@ -26,6 +27,7 @@ const props = withDefaults(
     taskTitle: "",
     dataInspectorDescription: false,
     dataInspectorReviewNotes: false,
+    dataProjectMemo: false,
     height: "100%",
     minHeight: 180,
     fullscreen: false,
@@ -332,6 +334,13 @@ onBeforeUnmount(() => {
     <textarea
       v-if="dataInspectorReviewNotes"
       data-inspector-review-notes
+      class="sr-only-sync-textarea"
+      :value="modelValue"
+      @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
+    />
+    <textarea
+      v-if="dataProjectMemo"
+      data-project-memo
       class="sr-only-sync-textarea"
       :value="modelValue"
       @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"

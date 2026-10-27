@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
 import type { Project, ProjectChanges } from "../types";
 import DateInput from "./DateInput.vue";
+import MarkdownEditor from "./MarkdownEditor.vue";
 
 const props = defineProps<{
   open: boolean;
@@ -16,6 +17,9 @@ const emit = defineEmits<{
 
 const colors = ["#285a78", "#8b4b3d", "#8a651f", "#4f6b51", "#65527c", "#426e70"];
 const customColorActive = ref(false);
+const fullscreen = ref(false);
+const fullscreenCharCount = computed(() => (draft.description || "").trim().length);
+
 const draft = reactive<ProjectChanges>({
   name: "",
   color: colors[0],
@@ -25,9 +29,35 @@ const draft = reactive<ProjectChanges>({
   status: "active",
 });
 
+function closeFullscreen() {
+  fullscreen.value = false;
+}
+
+function handleFullscreenEsc(e: KeyboardEvent) {
+  if (e.key === "Escape" && fullscreen.value) {
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    closeFullscreen();
+  }
+}
+
+watch(fullscreen, (val) => {
+  if (val) {
+    window.addEventListener("keydown", handleFullscreenEsc, { capture: true });
+  } else {
+    window.removeEventListener("keydown", handleFullscreenEsc, { capture: true });
+  }
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", handleFullscreenEsc, { capture: true });
+});
+
 watch(
   () => [props.open, props.project] as const,
   () => {
+    fullscreen.value = false;
     draft.name = props.project?.name ?? "";
     draft.color = props.project?.color ?? colors[0];
     customColorActive.value = !colors.includes(draft.color);
@@ -38,6 +68,14 @@ watch(
   },
   { immediate: true },
 );
+
+function handleModalEsc() {
+  if (fullscreen.value) {
+    closeFullscreen();
+    return;
+  }
+  emit("close");
+}
 
 function submit() {
   const name = draft.name.trim();
@@ -54,12 +92,12 @@ function submit() {
       aria-modal="true"
       aria-labelledby="project-editor-title"
       @submit.prevent="submit"
-      @keydown.esc.stop="emit('close')"
+      @keydown.esc.stop="handleModalEsc"
     >
       <header>
         <div>
           <h2 id="project-editor-title">{{ project ? "编辑项目" : "新建项目" }}</h2>
-          <p>项目保存共同背景，任务只记录具体行动。</p>
+          <p>项目保存共同背景与资料，任务只记录具体行动。</p>
         </div>
         <button class="icon-button" type="button" aria-label="关闭项目编辑" @click="emit('close')"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" /></svg></button>
       </header>
@@ -83,10 +121,22 @@ function submit() {
         </div>
       </fieldset>
 
-      <label class="field">
-        <span>项目说明</span>
-        <textarea v-model="draft.description" rows="5" placeholder="记录目标、背景、资料位置或完成标准" />
-      </label>
+      <div class="field field--project-memo">
+        <div class="field-header">
+          <span>项目备忘</span>
+        </div>
+        <MarkdownEditor
+          v-model="draft.description"
+          label="项目备忘"
+          placeholder="保存该项目的相关进展以及相关的资料信息（支持所见即所得 Markdown、表格、图片上传、Ctrl+V 粘贴与全屏编辑）…"
+          :task-title="draft.name"
+          :data-project-memo="true"
+          :document-preview="true"
+          :height="220"
+          :min-height="160"
+          @toggle-fullscreen="fullscreen = true"
+        />
+      </div>
 
       <label class="field">
         <span>本地路径</span>
@@ -116,5 +166,48 @@ function submit() {
         </div>
       </footer>
     </form>
+
+    <!-- 项目备忘全屏沉浸编辑弹层 -->
+    <Teleport to="body">
+      <div
+        v-if="fullscreen"
+        class="markdown-fullscreen-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="全屏项目备忘"
+      >
+        <header class="markdown-fullscreen-modal__header">
+          <div class="markdown-fullscreen-modal__title">
+            <strong>项目备忘 · 全屏</strong>
+            <span v-if="draft.name" class="markdown-fullscreen-modal__task">{{ draft.name }}</span>
+          </div>
+          <div class="markdown-fullscreen-modal__info">
+            <span class="info-stat">{{ fullscreenCharCount }} 字符</span>
+            <span class="info-sep">·</span>
+            <button
+              type="button"
+              class="info-esc-btn"
+              title="按 Esc 键或点击退出全屏"
+              @click="closeFullscreen"
+            >
+              按 <kbd>Esc</kbd> 退出
+            </button>
+          </div>
+        </header>
+
+        <main class="markdown-fullscreen-modal__body">
+          <MarkdownEditor
+            key="project-memo-fullscreen"
+            v-model="draft.description"
+            label="项目备忘"
+            :task-title="draft.name"
+            :fullscreen="true"
+            :document-preview="true"
+            height="100%"
+            @toggle-fullscreen="closeFullscreen"
+          />
+        </main>
+      </div>
+    </Teleport>
   </div>
 </template>

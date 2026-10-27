@@ -1751,8 +1751,10 @@ kbd {
 }
 
 .project-editor {
-  width: min(460px, calc(100vw - 48px));
+  width: min(640px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
   padding: 0 22px 20px;
+  overflow-y: auto;
   border: 1px solid #aaa9a2;
   border-radius: 9px;
   background: #f7f7f3;
@@ -1762,7 +1764,11 @@ kbd {
 .project-editor > header { display: flex; align-items: flex-start; justify-content: space-between; margin: 0 -8px 18px 0; padding: 21px 0 16px; border-bottom: 1px solid var(--line-soft); }
 .project-editor h2 { margin: 0; color: var(--ink-strong); font-size: 18px; letter-spacing: -.02em; }
 .project-editor header p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
-.project-editor .field textarea { min-height: 112px; }
+.project-editor .field textarea:not(.sr-only-sync-textarea) { min-height: 112px; }
+.field--project-memo { display: flex; flex-direction: column; gap: 6px; margin: 0 0 16px; }
+.field--project-memo > span,
+.field--project-memo .field-header span { font-size: 14px; font-weight: 680; color: #4f5755; line-height: 1.35; }
+.field--project-memo .kanboard-markdown-editor { border-radius: 6px; }
 .project-editor > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 4px; }
 .project-editor > footer > div { display: flex; gap: 8px; }
 .project-editor > footer > .text-button { color: var(--red); }

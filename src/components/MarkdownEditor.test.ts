@@ -64,7 +64,18 @@ describe("MarkdownEditor", () => {
     const wrapper = mount(MarkdownEditor, { props: { modelValue: "" } });
     const vm = wrapper.vm as unknown as { handleUpload: (files: File[]) => Promise<string[]> };
     expect(await vm.handleUpload([new File(["x"], "test.png")])).toEqual([]);
-    expect(wrapper.get('[role="alert"]').text()).toContain("图片大小不能超过 20 MB");
-    wrapper.unmount();
+    expect(wrapper.get('[role="alert"]').text()).toContain("图片大小不能超过 20 MB");    wrapper.unmount();
+  });
+
+  it("mounts with dataProjectMemo sync textarea", () => {
+    const wrapper = mount(MarkdownEditor, {
+      props: {
+        modelValue: "项目进展备忘",
+        dataProjectMemo: true,
+      },
+    });
+    const textarea = wrapper.find("textarea[data-project-memo]");
+    expect(textarea.exists()).toBe(true);
+    expect((textarea.element as HTMLTextAreaElement).value).toBe("项目进展备忘");
   });
 });
