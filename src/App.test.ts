@@ -35,6 +35,15 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
   onAction: vi.fn(async () => ({ unregister: vi.fn() })),
 }));
 
+const onboardingMock = vi.hoisted(() => ({
+  startOnboarding: vi.fn(),
+  stopOnboarding: vi.fn(),
+  startFirstOnboarding: vi.fn(),
+  notifyOnboardingTaskDropped: vi.fn(),
+  isOnboardingActive: vi.fn(() => false),
+}));
+vi.mock("./onboarding", () => onboardingMock);
+
 const repository = vi.hoisted(() => ({
   createTask: vi.fn(),
   deleteTag: vi.fn(),
@@ -50,6 +59,8 @@ const repository = vi.hoisted(() => ({
   createRecurringSuccessor: vi.fn(),
   restoreTask: vi.fn(),
   trashTask: vi.fn(),
+  isMockMode: vi.fn(() => false),
+  setMockMode: vi.fn(),
   sortDoneTasks: (tasks: any[]) =>
     tasks.sort((a, b) => {
       const timeA = a.completedAt ? Date.parse(a.completedAt) : a.updatedAt ? Date.parse(a.updatedAt) : 0;
@@ -656,6 +667,37 @@ describe("personal task wall", () => {
     const cards = doneColumn.findAll(".task-card");
     expect(cards[0].text()).toContain("整理个人任务");
     expect(cards[1].text()).toContain("早先完成的任务");
+    wrapper.unmount();
+  });
+
+  it("enters mock onboarding mode on clicking guide button and restores on exit", async () => {
+    repository.loadTaskWall.mockResolvedValue(wall());
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+
+    expect(wrapper.find(".onboarding-banner").exists()).toBe(false);
+
+    // Click guide button
+    const guideButton = wrapper.get("[data-tour='guide-help']");
+    await guideButton.trigger("click");
+    await flushPromises();
+
+    expect(repository.setMockMode).toHaveBeenCalledWith(true);
+    expect(onboardingMock.startOnboarding).toHaveBeenCalled();
+    expect(wrapper.find(".onboarding-banner").exists()).toBe(true);
+
+    // Verify exit callback restores real tasks
+    const opts = onboardingMock.startOnboarding.mock.calls[0]?.[0];
+    expect(opts?.onExit).toBeTypeOf("function");
+
+    // Exit flow
+    await opts.onExit();
+    await flushPromises();
+
+    expect(repository.setMockMode).toHaveBeenCalledWith(false);
+    expect(onboardingMock.stopOnboarding).toHaveBeenCalled();
+    expect(wrapper.find(".onboarding-banner").exists()).toBe(false);
+
     wrapper.unmount();
   });
 });

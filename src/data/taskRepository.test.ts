@@ -14,7 +14,21 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue("sqlite:kanboard.db"),
 }));
 
-import { deleteTag, restoreTask, saveTaskOrder, trashTask, updateTask, loadTaskWall, loadDeletedTasks } from "./taskRepository";
+import {
+  createTask,
+  deleteTag,
+  isMockMode,
+  loadDeletedTasks,
+  loadProjects,
+  loadTags,
+  loadTaskEvents,
+  loadTaskWall,
+  restoreTask,
+  saveTaskOrder,
+  setMockMode,
+  trashTask,
+  updateTask,
+} from "./taskRepository";
 
 describe("task repository ordering", () => {
   beforeEach(() => {
@@ -355,5 +369,80 @@ describe("task trash persistence", () => {
       .mockResolvedValueOnce([]).mockResolvedValueOnce([]);
     expect((await loadDeletedTasks())[0]?.inAgentSop).toBe(true);
     expect(database.select.mock.calls[0]?.[0]).toContain("t.in_agent_sop AS inAgentSop");
+  });
+});
+
+describe("mock mode in task repository", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setMockMode(false);
+  });
+
+  it("switches to in-memory mock data without touching database", async () => {
+    expect(isMockMode()).toBe(false);
+
+    setMockMode(true);
+    expect(isMockMode()).toBe(true);
+
+    const columns = await loadTaskWall();
+    const projects = await loadProjects();
+    const tags = await loadTags();
+    const events = await loadTaskEvents();
+
+    expect(database.select).not.toHaveBeenCalled();
+    expect(columns.length).toBe(7);
+    expect(projects.length).toBeGreaterThanOrEqual(2);
+    expect(tags.length).toBeGreaterThanOrEqual(3);
+    expect(events.length).toBeGreaterThanOrEqual(1);
+
+    const doingCol = columns.find((c) => c.id === "doing")!;
+    expect(doingCol.tasks.length).toBe(1);
+
+    const readyCol = columns.find((c) => c.id === "ready")!;
+    const demoTask = readyCol.tasks.find((t) => t.id === "mock-task-drag-demo")!;
+    expect(demoTask).toBeDefined();
+
+    // In mock mode, drag task to doing and saveTaskOrder
+    readyCol.tasks = readyCol.tasks.filter((t) => t.id !== demoTask.id);
+    doingCol.tasks.push(demoTask);
+    await saveTaskOrder(columns);
+
+    expect(database.execute).not.toHaveBeenCalled();
+    expect(demoTask.columnId).toBe("doing");
+
+    // In mock mode, creating a task
+    const newTask = await createTask("测试新任务", "todo", null);
+    expect(database.execute).not.toHaveBeenCalled();
+    expect(newTask.title).toBe("测试新任务");
+
+    // In mock mode, updating a task
+    const updatedTags = await updateTask(demoTask.id, {
+      title: "更新后的演示任务",
+      description: "更新描述",
+      dueDate: null,
+      priority: "high",
+      columnId: "doing",
+      projectId: null,
+      tagNames: ["新标签"],
+      blockedReason: null,
+      checklist: [],
+      recurrenceRule: "none",
+      reviewNotes: "",
+    });
+    expect(database.execute).not.toHaveBeenCalled();
+    expect(updatedTags[0]?.name).toBe("新标签");
+
+    // In mock mode, trashing a task
+    const deletedAt = await trashTask(newTask.id);
+    expect(database.execute).not.toHaveBeenCalled();
+    expect(deletedAt).toBeDefined();
+
+    // Disable mock mode restores database queries
+    setMockMode(false);
+    expect(isMockMode()).toBe(false);
+
+    database.select.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    await loadTaskWall();
+    expect(database.select).toHaveBeenCalled();
   });
 });

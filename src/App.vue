@@ -15,6 +15,7 @@ import {
   createTask,
   deleteTag,
   deleteTask,
+  isMockMode,
   loadDeletedTasks,
   loadProjects,
   loadTags,
@@ -23,13 +24,18 @@ import {
   restoreTask,
   saveTaskOrder,
   saveProject,
+  setMockMode,
   sortDoneTasks,
   trashTask,
   updateTask,
 } from "./data/taskRepository";
 import { restoreDraggedCardToOrigin, type DragOrigin } from "./drag/dragPlaceholder";
 import { dragPointFrom, isPointInDragTrash } from "./drag/trashDropZone";
-import { startFirstOnboarding, startOnboarding } from "./onboarding";
+import {
+  startFirstOnboarding,
+  startOnboarding,
+  stopOnboarding,
+} from "./onboarding";
 import { calculateFlowMetrics } from "./flowMetrics";
 import { loadSopConfig, initSopListener } from "./data/sopRepository";
 import type { DeletedTask, FlowMetrics, Project, ProjectChanges, Tag, Task, TaskChanges, TaskColumn, TaskEvent, TaskScope } from "./types";
@@ -65,6 +71,41 @@ const dropReceivedInside = ref(false);
 const dragSnapshot = ref<TaskColumn[] | null>(null);
 const projectEditorOpen = ref(false);
 const editingProject = ref<Project | null>(null);
+
+const onboardingActive = ref(false);
+
+async function startOnboardingFlow() {
+  if (onboardingActive.value) {
+    startOnboarding({
+      onExit: exitOnboardingFlow,
+    });
+    return;
+  }
+
+  setMockMode(true);
+  onboardingActive.value = true;
+  scope.value = { kind: "all" };
+  filterMode.value = "all";
+  searchQuery.value = "";
+  swimlaneMode.value = false;
+  selectedTaskId.value = null;
+
+  await load({ initial: false, silent: true });
+  await nextTick();
+
+  startOnboarding({
+    onExit: exitOnboardingFlow,
+  });
+}
+
+async function exitOnboardingFlow() {
+  if (!onboardingActive.value) return;
+  stopOnboarding();
+  setMockMode(false);
+  onboardingActive.value = false;
+  await load({ initial: false, silent: true });
+  announce("已退出引导，已无缝恢复真实任务");
+}
 
 let pendingRefreshAfterDrag = false;
 let queuedRefresh = false;
@@ -313,6 +354,7 @@ async function load(options: { initial?: boolean; silent?: boolean } = {}) {
 }
 
 async function handleBackgroundRefresh() {
+  if (isMockMode()) return;
   if (draggingTask.value) {
     pendingRefreshAfterDrag = true;
     return;
@@ -914,10 +956,11 @@ onMounted(async () => {
     window.setTimeout(() => splash.remove(), 180);
   }
   if (errorMessage.value) return;
-  startFirstOnboarding();
+  startFirstOnboarding(startOnboardingFlow);
 });
 
 onBeforeUnmount(() => {
+  stopOnboarding();
   stopTrashTracking();
   window.removeEventListener("keydown", handleGlobalKeydown);
   window.removeEventListener("dragstart", handleWindowDragStart, true);
@@ -966,12 +1009,20 @@ onBeforeUnmount(() => {
           data-tour="guide-help"
           type="button"
           :disabled="loading || Boolean(errorMessage)"
-          @click="startOnboarding()"
+          @click="startOnboardingFlow()"
         >使用引导</button>
         <button class="text-button guide-button" type="button" @click="settingsOpen = true">设置</button>
         <div class="capture-shortcut" aria-hidden="true"><kbd>Ctrl K</kbd><span>快速记录</span></div>
       </div>
     </header>
+
+    <div v-if="onboardingActive" class="onboarding-banner" role="status">
+      <div class="onboarding-banner__content">
+        <span class="onboarding-banner__tag">引导演示</span>
+        <span>当前已加载 Kanboard 演示任务，支持拖拽与功能探索，所有操作不影响本地数据库。</span>
+      </div>
+      <button class="onboarding-banner__close" type="button" @click="exitOnboardingFlow">退出引导</button>
+    </div>
 
     <div v-if="loading" class="system-state" role="status">正在打开本地任务墙…</div>
     <div v-else-if="errorMessage && !hasLoadedOnce" class="system-state system-state--error" role="alert">
