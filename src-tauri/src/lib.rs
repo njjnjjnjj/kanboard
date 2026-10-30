@@ -1,5 +1,6 @@
 mod mcp;
 mod storage;
+mod description_history;
 mod document_preview;
 pub mod windows_notify;
 use tauri::Manager;
@@ -204,6 +205,8 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             storage::get_storage_info,
+            description_history::list_task_description_versions,
+            description_history::update_task_description,
             storage::get_database_url,
             storage::export_data,
             storage::import_data,

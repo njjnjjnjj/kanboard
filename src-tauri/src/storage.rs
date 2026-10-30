@@ -112,6 +112,8 @@ pub(crate) fn migrations() -> Migrator {
             "add_agent_sop_status",
             include_str!("../migrations/0009_agent_sop_status.sql"),
         ),
+        (10, "task_description_versions", include_str!("../migrations/0010_task_description_versions.sql")),
+        (11, "agent_description_history", include_str!("../migrations/0011_agent_description_history.sql")),
     ];
     Migrator {
         migrations: Cow::Owned(
@@ -132,7 +134,7 @@ pub(crate) fn migrations() -> Migrator {
     }
 }
 
-async fn connect(path: &Path, create: bool) -> Result<SqlitePool, String> {
+pub(crate) async fn connect(path: &Path, create: bool) -> Result<SqlitePool, String> {
     let options = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(create);

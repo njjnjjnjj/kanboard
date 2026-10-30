@@ -80,73 +80,10 @@ pub struct AntigravityConnection {
     pub configured: bool,
 }
 
-pub const DEFAULT_SOP_SUMMARY: &str = "请按 Kanboard SOP 执行该任务：前往本地项目路径开发，完成后流转至「待验证」并提交验证方案（可读性优先：必要时使用表格、清单与代码块分项排版，避免单行堆砌，严格遵守中文文案排版指北，严禁使用 emoji）。";
+pub const TASK_DESCRIPTION_POLICY: &str = "任务说明修订必须先读取 get_task，再调用 update_task_description，提交完整 Markdown 正文、简短 change_summary 和读取时的 expected_description；不得向正文追加时间戳日志。历史版本仅记录 Agent 通过 MCP 提交的修改，人工编辑不生成记录；通过 list_task_description_versions 查看单次修改前后差异，进度与阻塞备注独立记录。文档使用 Markdown 超链接，本机文档可用绝对路径。";
 
-pub const DEFAULT_SOP_CONTENT: &str = r#"### 任务接单与自主执行 SOP（标准作业流程）
-
-当用户在对话中给出【看板任务】、拖入任务或指定任务 ID（如 UUID）要求处理/执行时，必须严格按照如下流程自主推进：
-
-1. **查阅任务详情与上下文**：
-   - 调用 `get_task(task_id)` 查询任务需求描述、检查清单（Checklist）及所属项目的本地工作区绝对路径（`task.project.path`）。
-2. **移入进行中**：
-   - 调用 `update_task_status(task_id, status="doing")` 将任务标记为进行中（系统将自动记录开始时间）。
-3. **定位本地仓库开发**：
-   - 切换或聚焦至项目本地路径（`project.path`）进行代码编写、修改与本地调试。若未配置路径，可主动询问用户或调用 `set_project_path`。
-4. **实时追踪检查清单**：
-   - 逐步完成任务子项时，调用 `update_checklist_item(task_id, item_id, completed=true)` 实时打钩，保持看板状态与实际研发进度同步。
-5. **异常与阻塞上报（不可抗力或疑问）**：
-   - 若遇到单测未过、环境缺失、第三方依赖受阻、物料短缺或需要人工决策的卡点，**严禁自行猜测或强行推进**。
-   - 必须调用 `set_task_blocked(task_id, reason="...", detail="...")`，详细阐明卡点背景，桌面端将立即收到通知并弹窗告警，等待用户协助。
-6. **提测流转（重要：禁止直接标为 `done`）**：
-   - **Agent 严禁自行将任务变更为 `done`**，最终完成状态必须由人类用户验收确认。
-   - 当所有工作完成并通过本地测试后，**调用专用提测工具**：
-     `submit_task_verification(task_id, implementation="...", summary="...", test_guide="...")`
-     该工具将自动将任务移至「**待验证**（`verify`）」列，并将结构化交付文档记录于独立的「**验证方案**」选项卡中供人工审核。
-   - **实际截图附件**：自行校验中已有的相关截图，应先调用 `import_image_attachment(file_path="本机截图绝对路径")` 导入。工具将图片复制到当前 SQLite 数据库同级的 `attachments` 目录，保留原件。将返回的 `markdown` 写入验证方案，并标明页面状态或验证点；引用格式为 `![验证点](attachments/年/月/文件名.png)`。不得把项目绝对路径、`file://` 或临时显示协议地址写入方案。导入失败时如实报告原因，不得宣称已附图。没有截图时如实说明实际验证方式，无须额外生成截图。
-   - **排版与格式规范要求（可读性优先，严格遵守）**：
-     - **严禁单行推到底**：严禁将核心改动、交付成果或测试步骤写成无分段、无排版的单行长文本！必须结构化分项呈现，可读性放在第一位。
-     - **必要时必须使用 Markdown 表格（Table）**：
-       - 涉及多个模块、文件或逻辑改动时，**必须优先使用表格**清晰对比展现（例如 `| 模块 / 文件 | 改动类型 | 核心逻辑说明 |`）；
-       - 涉及多项测试命令或验收条件时，**必须优先使用表格**结构化罗列（例如 `| 验证项 | 测试命令 / 操作路径 | 预期效果 |`）。
-     - **善用 Markdown 代码块与复选清单**：
-       - 执行命令必须放入带有语言标签的代码块（如 ```bash ... ```）；
-       - 交付项与 Checklist 达成情况必须使用复选清单 `- [x]` 分项列出。
-     - **遵循《中文文案排版指北》规范**：严格遵循 mzlogin/chinese-copywriting-guidelines：
-       - 中文与英文之间必须增加空格（例如 `使用 MCP 服务` 而非 `使用MCP服务`）；
-       - 中文与数字之间必须增加空格（例如 `新增 3 个测试用例` 而非 `新增3个测试用例`）；
-       - 数字与单位之间增加空格（例如 `耗时 120 ms`，度数与百分比除外如 `100%`）；
-       - 中文语句使用全角标点符号（，。！？：；“”‘’《》（）），代码、英文短语及文件路径使用半角；
-       - 英文专有名词保持标准大小写（例如 `Markdown`、`Git`、`MCP`、`API`、`UI`）。
-     - **严禁包含任何 emoji**：不得包含任何 emoji 表情符号或装饰图标，保持中性纯文本专业质感。
-
-#### 验证方案标准参考模版
-
-调用 `submit_task_verification` 时各入参推荐格式如下：
-
-- **`implementation` 示例**：
-  ```markdown
-  | 模块 / 文件 | 改动类型 | 核心逻辑说明 |
-  | :--- | :--- | :--- |
-  | `src/components/TaskInspector.vue` | UI 重构 | 增加 Markdown 渲染视图，支持预览与源码编辑模式无缝切换 |
-  | `src-tauri/src/mcp.rs` | 接口规范 | 更新提测工具入参描述，强化表格化多维交付与排版指北约束 |
-  | `src/styles.css` | 样式优化 | 为表格、代码块及列表增加中性质感边框与适宜行高 |
-  ```
-
-- **`summary` 示例**：
-  ```markdown
-  - [x] **Markdown 表格与视图渲染**：完成前端界面支持，提升复杂文档可读性。
-  - [x] **中文文案排版指北**：严格检查并规范中英文与数字间空格，彻底杜绝单行推底。
-  - [x] **测试覆盖**：新增 2 项验证测试，覆盖表格与渲染切换，全量测试 100% 通过。
-  ```
-
-- **`test_guide` 示例**：
-  ```markdown
-  | 验证项 | 测试命令 / 操作路径 | 预期结果 |
-  | :--- | :--- | :--- |
-  | 前端单元测试 | `npm test` | 全部单测通过 |
-  | 后端单元测试 | `cargo test --manifest-path src-tauri/Cargo.toml` | 全部单测通过 |
-  | 界面交互验收 | 在看板中打开待验证任务检查器，查看「验证方案」Tab | Markdown 表格与内容优雅排版，可正常切换编辑与预览 |
-  ```"#;
+pub const DEFAULT_SOP_SUMMARY: &str = include_str!("../../docs/default-sop-summary.txt");
+pub const DEFAULT_SOP_CONTENT: &str = include_str!("../../docs/default-sop.md");
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -160,7 +97,7 @@ pub struct SopConfig {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct SetCustomSopInput {
-    /// SOP 概述内容（用于任务下发时注入 Prompt 引导 Agent）
+    /// SOP 概述内容（用于设置展示及 Agent 通过 get_custom_sop 读取）
     summary: String,
     /// 完整 SOP Markdown 规范文档内容
     content: String,
@@ -542,12 +479,8 @@ struct UpdateTaskStatusInput {
 struct SubmitTaskVerificationInput {
     /// 任务唯一 ID。
     task_id: String,
-    /// 核心实现方案。严禁单行推到底！可读性优先：多模块/文件改动时必须优先使用 Markdown 表格 `| 模块/文件 | 改动类型 | 核心逻辑说明 |` 或多层级列表清晰分步呈现，中英文及数字间加空格，严禁包含 emoji。
-    implementation: String,
-    /// 交付情况与达成成果。严禁单行长句！必须使用 Markdown 复选清单 `- [x]` 或表格分项逐条罗列功能点、关键产物及 Checklist 完成情况，中英文及数字间加空格，严禁包含 emoji。
-    summary: String,
-    /// 验证与测试方式。严禁无分段堆叠！必须优先使用表格 `| 验证项 | 测试命令 / 操作路径 | 预期效果 |` 或带语言标签的代码块清晰列出验收方式，中英文及数字间加空格，严禁包含 emoji。
-    test_guide: String,
+    /// 完整 Markdown 验收方案。根据任务类型、复杂度与实际成果自主编排，不强制章节、表格、复选清单或篇幅；说明交付结果、必要核对方法、实际验证结果及未验证项，避免重复，遵守中文排版规范，禁止 emoji。
+    content: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -577,10 +510,22 @@ struct UpdateChecklistItemInput {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct UpdateTaskDescriptionInput {
+    /// 任务 ID。
+    task_id: String,
+    /// 整理后的完整 Markdown 正文，替换当前任务说明；允许空字符串清空。
+    description: String,
+    /// 本次变更的简短摘要，不能为空。
+    change_summary: String,
+    /// get_task 返回的当前任务说明原文，用于防止覆盖其他人的新版本。
+    expected_description: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct AppendTaskNotesInput {
     /// Stable task id.
     task_id: String,
-    /// Progress notes, execution results, or error details to append to the task description.
+    /// 独立操作备注，不修改任务说明；修订正文请调用 update_task_description。
     notes: String,
 }
 
@@ -1047,21 +992,6 @@ impl KanboardMcp {
             None
         };
 
-        let updated_desc = if let Some(comment) = &input.comment {
-            let trimmed = comment.trim();
-            if !trimmed.is_empty() {
-                if task.description.trim().is_empty() {
-                    trimmed.to_string()
-                } else {
-                    format!("{}\n\n[{}] {}", task.description.trim(), &now[0..19].replace('T', " "), trimmed)
-                }
-            } else {
-                task.description.clone()
-            }
-        } else {
-            task.description.clone()
-        };
-
         let updated_review_notes = if let Some(notes) = &input.review_notes {
             notes.clone()
         } else {
@@ -1069,14 +999,13 @@ impl KanboardMcp {
         };
 
         sqlx::query(
-            "UPDATE tasks SET column_id = ?, completed_at = ?, started_at = ?, blocked_reason = ?, blocked_since = ?, description = ?, review_notes = ?, in_agent_sop = ?, updated_at = ? WHERE id = ?"
+            "UPDATE tasks SET column_id = ?, completed_at = ?, started_at = ?, blocked_reason = ?, blocked_since = ?, review_notes = ?, in_agent_sop = ?, updated_at = ? WHERE id = ?"
         )
         .bind(&input.status)
         .bind(&completed_at)
         .bind(&started_at)
         .bind(&blocked_reason)
         .bind(&blocked_since)
-        .bind(&updated_desc)
         .bind(&updated_review_notes)
         .bind(in_agent_sop)
         .bind(&now)
@@ -1084,6 +1013,10 @@ impl KanboardMcp {
         .execute(&pool)
         .await
         .map_err(mcp_error)?;
+
+        if let Some(comment) = &input.comment {
+            crate::description_history::record_note(&pool, &input.task_id, "status", comment, &now).await.map_err(mcp_error)?;
+        }
 
         let status_changed = task.column_id != input.status;
         if status_changed {
@@ -1139,11 +1072,15 @@ impl KanboardMcp {
         structured(json!({ "attachment": attachment, "markdown": markdown }))
     }
 
-    #[tool(description = "提交任务验证方案并移入待验证列（verify）。实际截图先调用 import_image_attachment 导入，再将返回的 markdown 相对引用写入方案，禁止图片使用项目绝对路径。Agent 必须使用中文提供实现方案、交付情况及测试验证说明，中英文及数字间规范空格，支持标准 Markdown，严禁使用 emoji，严禁自行标记为完成（done）。")]
+    #[tool(description = "提交任务验证方案并移入待验证列（verify）。实际截图先调用 import_image_attachment 导入，再将返回的 markdown 相对引用写入方案，禁止图片使用项目绝对路径。Agent 使用 content 提交自主编排的完整 Markdown 验收方案，不强制统一章节、表格、复选清单或篇幅；如实说明交付结果、必要核对方法、实际验证结果与未验证项。遵守中文排版规范，禁止 emoji，严禁自行标记为完成（done）。")]
     async fn submit_task_verification(
         &self,
         Parameters(input): Parameters<SubmitTaskVerificationInput>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let content = input.content.trim();
+        if content.is_empty() {
+            return Err(rmcp::ErrorData::invalid_params("验证方案不能为空", None));
+        }
         let pool = self.pool().await?;
         let now = Utc::now().to_rfc3339();
 
@@ -1152,17 +1089,10 @@ impl KanboardMcp {
             return Err(rmcp::ErrorData::invalid_params("找不到任务", None));
         };
 
-        let formatted_notes = format!(
-            "### 1. 实现方案\n\n{}\n\n### 2. 交付成果\n\n{}\n\n### 3. 验证与测试指南\n\n{}",
-            input.implementation.trim(),
-            input.summary.trim(),
-            input.test_guide.trim(),
-        );
-
         sqlx::query(
             "UPDATE tasks SET column_id = 'verify', completed_at = NULL, started_at = NULL, blocked_reason = NULL, blocked_since = NULL, review_notes = ?, in_agent_sop = 0, updated_at = ? WHERE id = ?"
         )
-        .bind(&formatted_notes)
+        .bind(content)
         .bind(&now)
         .bind(&input.task_id)
         .execute(&pool)
@@ -1216,30 +1146,19 @@ impl KanboardMcp {
             return Err(rmcp::ErrorData::invalid_params("阻塞详情不能为空", None));
         }
 
-        let banner = format!(
-            "\n\n> [!WARNING] 阻塞异常记录 ({})\n> **原因类型**: `{}`\n> **阻塞详情**: {}",
-            &now[0..19].replace('T', " "),
-            reason,
-            detail
-        );
-        let new_description = if task.description.trim().is_empty() {
-            banner.trim_start().to_string()
-        } else {
-            format!("{}{}", task.description.trim(), banner)
-        };
-
         sqlx::query(
-            "UPDATE tasks SET column_id = 'blocked', completed_at = NULL, started_at = NULL, blocked_reason = ?, blocked_since = CASE WHEN column_id = 'blocked' THEN COALESCE(blocked_since, ?) ELSE ? END, in_agent_sop = 1, description = ?, updated_at = ? WHERE id = ?"
+            "UPDATE tasks SET column_id = 'blocked', completed_at = NULL, started_at = NULL, blocked_reason = ?, blocked_since = CASE WHEN column_id = 'blocked' THEN COALESCE(blocked_since, ?) ELSE ? END, in_agent_sop = 1, updated_at = ? WHERE id = ?"
         )
         .bind(&reason)
         .bind(&now)
         .bind(&now)
-        .bind(&new_description)
         .bind(&now)
         .bind(&input.task_id)
         .execute(&pool)
         .await
         .map_err(mcp_error)?;
+
+        crate::description_history::record_note(&pool, &input.task_id, "blocked", &format!("{reason}：{detail}"), &now).await.map_err(mcp_error)?;
 
         let status_changed = task.column_id != "blocked";
         if status_changed {
@@ -1309,7 +1228,36 @@ impl KanboardMcp {
         structured(json!({ "task": updated_task }))
     }
 
-    #[tool(description = "Append timestamped progress notes, execution logs, or comments to a task description.")]
+    #[tool(description = "整篇更新任务说明并自动保留历史版本。必须提供简短 change_summary 和读取时的 expected_description，避免覆盖并发修改。正文支持 Markdown 和本机文档超链接，不再追加时间戳日志。")]
+    async fn update_task_description(
+        &self,
+        Parameters(input): Parameters<UpdateTaskDescriptionInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let result = crate::description_history::update(&pool, &input.task_id, &input.description, &input.change_summary, &input.expected_description, "agent").await;
+        if let Err(error) = result {
+            pool.close().await;
+            return Err(rmcp::ErrorData::invalid_params(error, None));
+        }
+        let task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
+        let history = crate::description_history::load(&pool, &input.task_id).await.map_err(mcp_error)?;
+        pool.close().await;
+        self.emit_task_updated(Some(&input.task_id));
+        structured(json!({ "task": task, "history": history }))
+    }
+
+    #[tool(description = "读取 Agent 通过 MCP 修订任务说明的历史与独立操作备注。每条修订包含 previousDescription、description、修改摘要与保存时间；人工编辑不生成记录，按每次修改前后对比。")]
+    async fn list_task_description_versions(
+        &self,
+        Parameters(input): Parameters<TaskIdInput>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let pool = self.pool().await?;
+        let history = crate::description_history::load(&pool, &input.task_id).await.map_err(mcp_error)?;
+        pool.close().await;
+        structured(json!({ "history": history }))
+    }
+
+    #[tool(description = "记录独立操作备注，不向任务说明正文追加时间戳或日志。修订需求正文请调用 update_task_description，并提供完整正文和修改摘要。")]
     async fn append_task_notes(
         &self,
         Parameters(input): Parameters<AppendTaskNotesInput>,
@@ -1317,7 +1265,7 @@ impl KanboardMcp {
         let pool = self.pool().await?;
         let now = Utc::now().to_rfc3339();
 
-        let Some(task) = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)? else {
+        let Some(_task) = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)? else {
             pool.close().await;
             return Err(rmcp::ErrorData::invalid_params("找不到任务", None));
         };
@@ -1328,21 +1276,9 @@ impl KanboardMcp {
             return Err(rmcp::ErrorData::invalid_params("内容不能为空", None));
         }
 
-        let new_desc = if task.description.trim().is_empty() {
-            trimmed.to_string()
-        } else {
-            format!("{}\n\n[{}] {}", task.description.trim(), &now[0..19].replace('T', " "), trimmed)
-        };
-
-        sqlx::query(
-            "UPDATE tasks SET description = ?, in_agent_sop = CASE WHEN column_id IN ('verify', 'done') THEN 0 ELSE 1 END, updated_at = ? WHERE id = ?"
-        )
-        .bind(&new_desc)
-        .bind(&now)
-        .bind(&input.task_id)
-        .execute(&pool)
-        .await
-        .map_err(mcp_error)?;
+        crate::description_history::record_note(&pool, &input.task_id, "note", trimmed, &now).await.map_err(mcp_error)?;
+        sqlx::query("UPDATE tasks SET in_agent_sop = CASE WHEN column_id IN ('verify', 'done') THEN 0 ELSE 1 END, updated_at = ? WHERE id = ?")
+            .bind(&now).bind(&input.task_id).execute(&pool).await.map_err(mcp_error)?;
 
         let updated_task = load_task_by_id(&pool, &input.task_id).await.map_err(mcp_error)?;
         pool.close().await;
@@ -1391,7 +1327,7 @@ impl KanboardMcp {
         let pool = self.pool().await?;
         let sop = load_current_sop(&pool).await.map_err(mcp_error)?;
         pool.close().await;
-        structured(json!({ "sop": sop }))
+        structured(json!({ "sop": sop, "taskDescriptionPolicy": TASK_DESCRIPTION_POLICY }))
     }
 
     #[tool(description = "写入或更新 Kanboard 自定义 SOP（标准作业流程）。注意：Agent 严禁在未经用户明确确认前调用此工具！必须在用户对定制的 SOP 概述（summary）和完整规范（content）明确答复确认后，方可写入系统生效。")]
@@ -1431,11 +1367,13 @@ async fn load_current_sop(pool: &SqlitePool) -> Result<SopConfig, sqlx::Error> {
     .await?;
 
     if let Some(r) = row {
+        let is_custom = r.get::<i64, _>("is_custom") != 0;
         Ok(SopConfig {
             id: r.get("id"),
-            summary: r.get("summary"),
-            content: r.get("content"),
-            is_custom: r.get::<i64, _>("is_custom") != 0,
+            // 默认规范随应用升级；自定义规范保留用户保存的正文。
+            summary: if is_custom { r.get("summary") } else { DEFAULT_SOP_SUMMARY.into() },
+            content: if is_custom { r.get("content") } else { DEFAULT_SOP_CONTENT.into() },
+            is_custom,
             updated_at: r.get("updated_at"),
         })
     } else {
@@ -1788,6 +1726,18 @@ mod tests {
             .execute(&pool).await.unwrap();
         let service = KanboardMcp::new(Arc::new(Mutex::new(database.clone())), None);
 
+        service.update_task_description(Parameters(UpdateTaskDescriptionInput {
+            task_id: "agent-task".into(), description: "完整需求".into(),
+            change_summary: "明确范围".into(), expected_description: "".into(),
+        })).await.unwrap();
+        let versions = crate::description_history::load(&pool, "agent-task").await.unwrap();
+        assert_eq!(versions.versions.len(), 1);
+        assert_eq!(versions.versions[0].source, "agent");
+        assert!(service.update_task_description(Parameters(UpdateTaskDescriptionInput {
+            task_id: "agent-task".into(), description: "覆盖".into(),
+            change_summary: "过期更新".into(), expected_description: "".into(),
+        })).await.is_err());
+
         service.append_task_notes(Parameters(AppendTaskNotesInput {
             task_id: "agent-task".into(), notes: "接单".into(),
         })).await.unwrap();
@@ -1805,6 +1755,7 @@ mod tests {
             assert_eq!(task["blockedSince"].is_string(), status == "blocked");
             assert_eq!(task["blockedReason"].is_string(), status == "blocked");
         }
+        assert_eq!(load_task_by_id(&pool, "agent-task").await.unwrap().unwrap().description, "完整需求");
         let events = load_events(&pool, Some("agent-task"), 100).await.unwrap();
         assert_eq!(events.len(), 6, "重复设置相同状态不应生成流转事件");
 
@@ -1825,12 +1776,13 @@ mod tests {
         })).await.unwrap();
         assert_eq!(load_task_by_id(&pool, "agent-task").await.unwrap().unwrap().blocked_since.as_deref(), Some("2026-10-21T00:00:00Z"));
 
+        assert_eq!(load_task_by_id(&pool, "agent-task").await.unwrap().unwrap().description, "完整需求");
+        assert!(crate::description_history::load(&pool, "agent-task").await.unwrap().notes.len() >= 3);
         for initial_status in ["blocked", "done"] {
             sqlx::query("UPDATE tasks SET column_id = ?, completed_at = 'old' WHERE id = 'agent-task'")
                 .bind(initial_status).execute(&pool).await.unwrap();
             let result = service.submit_task_verification(Parameters(SubmitTaskVerificationInput {
-                task_id: "agent-task".into(), implementation: "实现方案".into(),
-                summary: "交付成果".into(), test_guide: "验证步骤".into(),
+                task_id: "agent-task".into(), content: "调整已完成。请打开任务核对状态。".into(),
             })).await.unwrap().structured_content.unwrap();
             let task = &result["task"];
             assert_eq!(task["columnId"], "verify");
@@ -1920,6 +1872,8 @@ mod tests {
         assert!(names.contains("set_task_blocked"));
         assert!(names.contains("update_checklist_item"));
         assert!(names.contains("append_task_notes"));
+        assert!(names.contains("update_task_description"));
+        assert!(names.contains("list_task_description_versions"));
         assert!(names.contains("set_project_path"));
         assert!(names.contains("submit_task_verification"));
         assert!(names.contains("import_image_attachment"));
@@ -1933,7 +1887,8 @@ mod tests {
             .unwrap();
         let initial_sop = initial_sop_res.structured_content.unwrap();
         assert_eq!(initial_sop["sop"]["isCustom"], false);
-        assert!(initial_sop["sop"]["summary"].as_str().unwrap().contains("请按 Kanboard SOP 执行该任务"));
+        assert_eq!(initial_sop["sop"]["summary"], DEFAULT_SOP_SUMMARY);
+        assert_eq!(initial_sop["sop"]["content"], DEFAULT_SOP_CONTENT);
 
         let set_sop_res = client
             .call_tool(
@@ -1955,7 +1910,8 @@ mod tests {
             .unwrap();
         let reset_sop = reset_sop_res.structured_content.unwrap();
         assert_eq!(reset_sop["sop"]["isCustom"], false);
-        assert!(reset_sop["sop"]["summary"].as_str().unwrap().contains("请按 Kanboard SOP 执行该任务"));
+        assert_eq!(reset_sop["sop"]["summary"], DEFAULT_SOP_SUMMARY);
+        assert_eq!(reset_sop["sop"]["content"], DEFAULT_SOP_CONTENT);
 
         let result = client
             .call_tool(CallToolRequestParams::new("get_dashboard_summary"))
@@ -1989,21 +1945,34 @@ mod tests {
         assert_eq!(crate::storage::read_image_attachment_impl(&directory, relative).unwrap().0, png);
         assert!(source_image.is_file());
 
+        let empty_result = client.call_tool(
+            CallToolRequestParams::new("submit_task_verification")
+                .with_arguments(serde_json::from_value(json!({
+                    "task_id": "task-test-1", "content": " \n "
+                })).unwrap())
+        ).await;
+        assert!(empty_result.is_err());
+        let state_pool = SqlitePool::connect_with(
+            SqliteConnectOptions::new().filename(&database),
+        ).await.unwrap();
+        assert_eq!(load_task_by_id(&state_pool, "task-test-1").await.unwrap().unwrap().column_id, "doing");
+        state_pool.close().await;
+
+        // 保留 Agent 编排的原文和附件，不注入固定章节。
+        let content = format!("已修复任务状态更新。\n\n请打开任务并核对状态；界面交互仍需人工验收。\n\n{}", image_result["markdown"].as_str().unwrap());
         let verify_res = client
             .call_tool(
                 CallToolRequestParams::new("submit_task_verification")
                     .with_arguments(serde_json::from_value(json!({
                         "task_id": "task-test-1",
-                        "implementation": "| 模块 | 改动类型 | 核心逻辑说明 |\n| :--- | :--- | :--- |\n| `mcp.rs` | 接口规范 | 支持结构化表格入参 |\n| `TaskInspector.vue` | 前端组件 | 渲染 Markdown 表格与视图切换 |",
-                        "summary": "- [x] 全部 68 项前端单测通过\n- [x] 全部 2 项后端单测通过",
-                        "test_guide": format!("| 验证项 | 测试命令 / 操作路径 | 预期效果 |\n| :--- | :--- | :--- |\n| 前端单测 | `npm test` | 68 passed |\n| 后端测试 | `cargo test` | 2 passed |\n\n{}", image_result["markdown"].as_str().unwrap())
+                        "content": content
                     })).unwrap())
             )
             .await
             .unwrap();
         let verify_content = verify_res.structured_content.unwrap();
         assert_eq!(verify_content["task"]["columnId"], "verify");
-        assert!(verify_content["task"]["reviewNotes"].as_str().unwrap().contains("| 模块 | 改动类型 | 核心逻辑说明 |"));
+        assert_eq!(verify_content["task"]["reviewNotes"], content);
         assert_eq!(verify_content["verifiedPending"], true);
         assert!(verify_content["task"]["reviewNotes"].as_str().unwrap().contains(relative));
 

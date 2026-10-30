@@ -63,7 +63,22 @@ export interface TaskColumn {
   tasks: Task[];
 }
 
+export interface TaskDescriptionVersion {
+  version: number;
+  previousDescription: string;
+  description: string;
+  summary: string;
+  source: string;
+  createdAt: string;
+}
+
+export interface TaskDescriptionHistory {
+  versions: TaskDescriptionVersion[];
+  notes: Array<{ kind: string; content: string; createdAt: string }>;
+}
+
 export interface TaskChanges {
+  descriptionBase?: string;
   title: string;
   description: string;
   dueDate: string | null;

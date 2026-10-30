@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import SurfaceMotion from "./SurfaceMotion.vue";
 import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { Ellipsis, Trash2 } from "lucide-vue-next";
 import type { Tag } from "../types";
 
 const props = defineProps<{
@@ -25,6 +27,7 @@ function positionMenu() {
   const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
   const opensAbove = window.innerHeight - rect.bottom < height + 12;
   menuStyle.value = {
+    "--surface-offset": opensAbove ? "-4px" : "4px",
     left: `${left}px`,
     top: `${opensAbove ? rect.top - height - 5 : rect.bottom + 5}px`,
     width: `${width}px`,
@@ -34,9 +37,8 @@ function positionMenu() {
 
 async function showMenu() {
   confirming.value = false;
-  open.value = true;
-  await nextTick();
   positionMenu();
+  open.value = true;
 }
 
 function closeMenu() {
@@ -95,15 +97,11 @@ onBeforeUnmount(() => {
     @click="open ? closeMenu() : showMenu()"
     @keydown.esc="handleEscape"
   >
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <circle cx="3.25" cy="8" r="1" />
-      <circle cx="8" cy="8" r="1" />
-      <circle cx="12.75" cy="8" r="1" />
-    </svg>
+    <Ellipsis :size="15" aria-hidden="true" />
   </button>
 
   <Teleport to="body">
-    <Transition name="tag-menu">
+    <SurfaceMotion kind="menu">
       <div
         v-if="open"
         :id="menuId"
@@ -114,9 +112,7 @@ onBeforeUnmount(() => {
         @keydown.esc="handleEscape"
       >
         <button v-if="!confirming" class="tag-actions__delete" type="button" role="menuitem" @click="askForConfirmation">
-          <svg viewBox="0 0 18 18" aria-hidden="true">
-            <path d="M3.5 5h11M7 3.5h4M5.7 5l.5 9.5h5.6l.5-9.5M7.6 7.5v4.3M10.4 7.5v4.3" />
-          </svg>
+          <Trash2 :size="16" aria-hidden="true" />
           <span>
             <strong>删除标签</strong>
             <small>{{ usageCount ? `已用于 ${usageCount} 项任务` : "尚未用于任务" }}</small>
@@ -133,6 +129,6 @@ onBeforeUnmount(() => {
           </div>
         </template>
       </div>
-    </Transition>
+    </SurfaceMotion>
   </Teleport>
 </template>

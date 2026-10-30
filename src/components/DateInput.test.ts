@@ -3,6 +3,25 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import DateInput from "./DateInput.vue";
 
 describe("DateInput", () => {
+  it("keeps calendar navigation and Escape from reaching the board behind it", async () => {
+    const outside = vi.fn();
+    const wrapper = mount(DateInput, { attachTo: document.body, props: { modelValue: null, label: "截止日期" } });
+    window.addEventListener("keydown", outside);
+    try {
+      await wrapper.get("[aria-label='打开截止日期选择器']").trigger("click");
+      const calendar = document.querySelector<HTMLElement>(".date-picker")!;
+      calendar.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+      await wrapper.vm.$nextTick();
+      calendar.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await wrapper.vm.$nextTick();
+      expect(outside).not.toHaveBeenCalled();
+      expect(document.querySelector(".date-picker")).toBeNull();
+      expect(document.activeElement).toBe(wrapper.get("[aria-label='打开截止日期选择器']").element);
+    } finally {
+      window.removeEventListener("keydown", outside);
+      wrapper.unmount();
+    }
+  });
   afterEach(() => {
     document.body.innerHTML = "";
   });

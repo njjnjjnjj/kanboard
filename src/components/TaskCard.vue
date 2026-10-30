@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from "vue";
+import { Check, Copy, RotateCw } from "lucide-vue-next";
 import { elapsedLabel, isAgingWarning } from "../flowTime";
 import { buildAgentTaskPrompt } from "../drag/agentPrompt";
 import type { Task } from "../types";
@@ -131,9 +132,7 @@ function selectFromKeyboard(event: KeyboardEvent) {
         :aria-pressed="isDone"
         @click.stop="emit('toggle', task)"
       >
-        <svg v-if="isDone" viewBox="0 0 16 16" aria-hidden="true">
-          <path d="m3.5 8.2 2.7 2.7 6.3-6.3" />
-        </svg>
+        <Check v-if="isDone" :size="11" aria-hidden="true" stroke-width="2.5" />
       </button>
       <h3>{{ task.title }}</h3>
     </div>
@@ -159,7 +158,7 @@ function selectFromKeyboard(event: KeyboardEvent) {
       </time>
       <span v-if="task.priority === 'high'" class="task-card__priority">高优先级</span>
       <span v-if="checklistProgress">清单 {{ checklistProgress }}</span>
-      <span v-if="task.recurrenceRule !== 'none'">↻</span>
+      <span v-if="task.recurrenceRule !== 'none'" class="task-card__recurrence"><RotateCw :size="11" aria-hidden="true" /></span>
     </div>
     <p v-if="task.columnId === 'blocked' && task.blockedReason" class="task-card__blocked-reason">
       {{ blockedReasonLabels[task.blockedReason] }}
@@ -173,13 +172,8 @@ function selectFromKeyboard(event: KeyboardEvent) {
       @click.stop="copyPrompt"
       @keydown.stop
     >
-      <svg v-if="copied" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="m3.5 8.2 2.7 2.7 6.3-6.3" />
-      </svg>
-      <svg v-else viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
-        <path d="M10.5 5.5V3.5a1.5 1.5 0 0 0-1.5-1.5H3.5a1.5 1.5 0 0 0-1.5 1.5V9.5a1.5 1.5 0 0 0 1.5 1.5h2" />
-      </svg>
+      <Check v-if="copied" :size="13" aria-hidden="true" stroke-width="2" />
+      <Copy v-else :size="13" aria-hidden="true" stroke-width="1.6" />
     </button>
   </article>
 </template>

@@ -32,6 +32,16 @@ npm run build:web
 
 正式 Windows 打包将在发布阶段通过 `npm run build` 执行。
 
+## 默认 SOP 与验收方案
+
+默认规范见 [SOP 正文](docs/default-sop.md) 与 [SOP 概述](docs/default-sop-summary.txt)，前后端共用同一份内容。未定制时随应用升级使用新版默认规范，已有自定义内容保留；「重置为默认」恢复为这套规范。
+
+任务拖拽和复制辅助提示词仅包含任务信息，不再追加 SOP 概述或任务说明修订规则。Agent 通过 Kanboard 技能调用 `get_custom_sop` 读取当前规范。
+
+Agent 使用 `submit_task_verification(task_id, content="完整 Markdown 正文")` 提测，系统保存正文并移入「待验证」，不再拼接固定章节。由 Agent 按任务自主编排，简单任务可使用简短段落，按需添加列表、表格或截图。仍须如实说明交付结果、必要核对方法、实际验证结果与未验证项，由用户决定是否完成。
+
+旧版 `implementation`、`summary`、`test_guide` 提测参数已替换为 `content`。更新应用后需刷新 MCP 连接及 Kanboard 插件，使 Agent 使用新的工具定义与技能指引；已保存的验证方案不受影响。
+
 ## 验证方案中的图片
 
 任务说明和验证方案支持上传图片或粘贴截图。图片保存在当前 `kanboard.db` 同级的 `attachments/年/月/` 目录，正文只保存相对引用。显示时由 Rust 的 `kanboard-image` 协议校验并读取图片，无需读取项目绝对路径。更改存储目录时，附件随数据库复制。

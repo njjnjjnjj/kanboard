@@ -2,10 +2,26 @@ import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi, afterEach } from "vitest";
 import MarkdownEditor from "./MarkdownEditor.vue";
 import * as attachmentService from "../services/attachmentService";
+import * as documentService from "../services/documentPreviewService";
 
 describe("MarkdownEditor", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("opens local document links from task descriptions and readonly history previews", async () => {
+    const open = vi.spyOn(documentService, "openDocumentPreview").mockResolvedValue();
+    for (const readonly of [false, true]) {
+      const wrapper = mount(MarkdownEditor, { props: { modelValue: "[方案](/D:/项目/方案.md)", readonly } });
+      const anchor = document.createElement("a");
+      anchor.href = "/D:/项目/方案.md";
+      anchor.textContent = "方案";
+      wrapper.get(".kanboard-vditor-instance").element.appendChild(anchor);
+      await wrapper.get("a").trigger("click");
+      expect(open).toHaveBeenLastCalledWith("/D:/项目/方案.md");
+      wrapper.unmount();
+    }
+    expect(open).toHaveBeenCalledTimes(2);
   });
 
   it("mounts and renders properly with open-source vditor in instant rendering mode", () => {

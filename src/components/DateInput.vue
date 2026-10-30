@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import SurfaceMotion from "./SurfaceMotion.vue";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { Calendar, ChevronLeft, ChevronRight, X } from "lucide-vue-next";
 
 const props = withDefaults(defineProps<{
   label: string;
@@ -73,6 +75,7 @@ function positionMenu() {
   const height = props.quick ? 370 : 326;
   const opensAbove = window.innerHeight - rect.bottom < height + 8 && rect.top > height;
   menuStyle.value = {
+    "--surface-offset": opensAbove ? "-4px" : "4px",
     left: `${Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))}px`,
     top: `${opensAbove ? Math.max(8, rect.top - height - 6) : rect.bottom + 6}px`,
     width: `${width}px`,
@@ -94,9 +97,8 @@ async function showCalendar() {
   const initial = dateFromKey(model.value) ?? new Date();
   visibleMonth.value = new Date(initial.getFullYear(), initial.getMonth(), 1);
   focusedDate.value = keyFromDate(initial);
-  open.value = true;
-  await nextTick();
   positionMenu();
+  open.value = true;
   await focusDay(focusedDate.value);
 }
 
@@ -120,6 +122,7 @@ async function changeMonth(offset: number) {
 function handleCalendarKeydown(event: KeyboardEvent) {
   if (event.key === "Escape") {
     event.preventDefault();
+    event.stopPropagation();
     closeCalendar();
     control.value?.querySelector<HTMLButtonElement>("[aria-haspopup='dialog']")?.focus();
     return;
@@ -133,6 +136,7 @@ function handleCalendarKeydown(event: KeyboardEvent) {
   const offset = offsets[event.key];
   if (!offset) return;
   event.preventDefault();
+  event.stopPropagation();
   const current = dateFromKey(focusedDate.value) ?? new Date();
   current.setDate(current.getDate() + offset);
   if (
@@ -189,15 +193,16 @@ onBeforeUnmount(() => {
           :aria-label="`打开${label}选择器`"
           @click="showCalendar"
         >
-          <svg viewBox="0 0 20 20" aria-hidden="true">
-            <path d="M5.5 2.8v2.5M14.5 2.8v2.5M3.2 7.2h13.6M4.2 4.3h11.6c.6 0 1 .4 1 1v10.2c0 .6-.4 1-1 1H4.2c-.6 0-1-.4-1-1V5.3c0-.6.4-1 1-1Z" />
-          </svg>
+          <Calendar :size="16" aria-hidden="true" />
         </button>
-        <button v-if="model" type="button" aria-label="清除日期" @click="model = null">×</button>
+        <button v-if="model" type="button" aria-label="清除日期" @click="model = null">
+          <X :size="14" aria-hidden="true" />
+        </button>
       </div>
     </div>
 
     <Teleport to="body">
+    <SurfaceMotion kind="menu">
       <div
         v-if="open"
         :id="menuId"
@@ -208,9 +213,13 @@ onBeforeUnmount(() => {
         @keydown="handleCalendarKeydown"
       >
         <header class="date-picker__header">
-          <button type="button" aria-label="上个月" @click="changeMonth(-1)">‹</button>
+          <button type="button" aria-label="上个月" @click="changeMonth(-1)">
+            <ChevronLeft :size="15" aria-hidden="true" />
+          </button>
           <strong aria-live="polite">{{ monthLabel }}</strong>
-          <button type="button" aria-label="下个月" @click="changeMonth(1)">›</button>
+          <button type="button" aria-label="下个月" @click="changeMonth(1)">
+            <ChevronRight :size="15" aria-hidden="true" />
+          </button>
         </header>
         <div v-if="props.quick" class="date-picker__shortcuts" :aria-label="`快速选择${label}`">
           <button
@@ -246,6 +255,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </div>
-    </Teleport>
+        </SurfaceMotion>
+  </Teleport>
   </div>
 </template>

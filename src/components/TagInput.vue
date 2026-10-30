@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import SurfaceMotion from "./SurfaceMotion.vue";
 import { computed, ref } from "vue";
+import { X } from "lucide-vue-next";
 import type { Tag } from "../types";
 
 const props = defineProps<{
@@ -73,7 +75,7 @@ function closeAfterBlur() {
         :aria-label="`移除标签：${name}`"
         @click.stop="remove(name)"
       >
-        <span>#{{ name }}</span><span aria-hidden="true">×</span>
+        <span>#{{ name }}</span><X :size="11" aria-hidden="true" />
       </button>
       <input
         ref="input"
@@ -89,6 +91,7 @@ function closeAfterBlur() {
         @blur="closeAfterBlur"
       />
     </div>
+    <SurfaceMotion kind="menu">
     <div v-if="open && (filtered.length || inputValue.trim())" class="tag-input__menu" role="listbox">
       <button v-for="tag in filtered" :key="tag.id" type="button" role="option" @mousedown.prevent="add(tag.name)">
         #{{ tag.name }}
@@ -102,5 +105,6 @@ function closeAfterBlur() {
         新建“{{ inputValue.trim() }}”
       </button>
     </div>
+    </SurfaceMotion>
   </div>
 </template>

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
 import type { TaskColumn } from "../types";
 
 const database = vi.hoisted(() => ({
@@ -15,19 +16,16 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import {
-  createTask,
   deleteTag,
-  isMockMode,
-  loadDeletedTasks,
-  loadProjects,
-  loadTags,
-  loadTaskEvents,
-  loadTaskWall,
   restoreTask,
   saveTaskOrder,
-  setMockMode,
   trashTask,
   updateTask,
+  loadTaskWall,
+  loadDeletedTasks,
+  loadColumns,
+  updateColumnWipLimit,
+  updateColumnWipLimits,
 } from "./taskRepository";
 
 describe("task repository ordering", () => {
@@ -255,6 +253,29 @@ describe("task project and tag persistence", () => {
     database.execute.mockResolvedValue({ rowsAffected: 1 });
   });
 
+  it("saves manual descriptions through the backend and never writes a stale body through SQL", async () => {
+    await updateTask("task-1", {
+      title: "修订", description: "完整新正文", descriptionBase: "旧正文",
+      columnId: "todo", projectId: null, tagNames: [], dueDate: null, priority: "none", blockedReason: null, checklist: [{ id: "item", text: "验收条件", completed: false, position: 1000 }], recurrenceRule: "none", reviewNotes: "",
+    });
+    expect(invoke).toHaveBeenCalledWith("update_task_description", {
+      taskId: "task-1", description: "完整新正文", expectedDescription: "旧正文",
+    });
+    const update = database.execute.mock.calls.find(([sql]) => sql.includes("SET column_id"));
+    expect(update?.[0]).not.toContain("description =");
+    expect(update?.[1]).not.toContain("完整新正文");
+    expect(database.execute).toHaveBeenCalledWith(expect.stringContaining("VALUES ($1, $2, $3, $4, $5)"), ["item", "task-1", "验收条件", 0, 1000]);
+  });
+
+  it("stops all other task writes when the description conflicts", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce("任务说明已被其他操作修改");
+    await expect(updateTask("task-1", {
+      title: "修订", description: "新正文", descriptionBase: "过期正文", columnId: "todo", projectId: null,
+      tagNames: [], dueDate: null, priority: "none", blockedReason: null, checklist: [], recurrenceRule: "none", reviewNotes: "",
+    })).rejects.toBe("任务说明已被其他操作修改");
+    expect(database.execute).not.toHaveBeenCalled();
+  });
+
   it("hydrates project identity and tags when loading the wall", async () => {
     database.select
       .mockResolvedValueOnce([{ id: "todo", title: "收集箱", position: 1000, wipLimit: null }])
@@ -372,77 +393,56 @@ describe("task trash persistence", () => {
   });
 });
 
-describe("mock mode in task repository", () => {
+describe("task repository column wip limits", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    setMockMode(false);
+    database.execute.mockResolvedValue({ rowsAffected: 1 });
   });
 
-  it("switches to in-memory mock data without touching database", async () => {
-    expect(isMockMode()).toBe(false);
+  it("loads column summaries with wip limits", async () => {
+    const mockColumns = [
+      { id: "doing", title: "进行中", position: 4000, wipLimit: 2 },
+      { id: "verify", title: "待验证", position: 5000, wipLimit: 2 },
+    ];
+    database.select.mockResolvedValueOnce(mockColumns);
 
-    setMockMode(true);
-    expect(isMockMode()).toBe(true);
+    const columns = await loadColumns();
+    expect(columns).toEqual(mockColumns);
+    expect(database.select).toHaveBeenCalledWith(
+      "SELECT id, title, position, wip_limit AS wipLimit FROM task_columns ORDER BY position",
+    );
+  });
 
-    const columns = await loadTaskWall();
-    const projects = await loadProjects();
-    const tags = await loadTags();
-    const events = await loadTaskEvents();
+  it("updates wip limit for a specific column", async () => {
+    await updateColumnWipLimit("doing", 5);
 
-    expect(database.select).not.toHaveBeenCalled();
-    expect(columns.length).toBe(7);
-    expect(projects.length).toBeGreaterThanOrEqual(2);
-    expect(tags.length).toBeGreaterThanOrEqual(3);
-    expect(events.length).toBeGreaterThanOrEqual(1);
+    expect(database.execute).toHaveBeenCalledWith(
+      "UPDATE task_columns SET wip_limit = $1 WHERE id = $2",
+      [5, "doing"],
+    );
+  });
 
-    const doingCol = columns.find((c) => c.id === "doing")!;
-    expect(doingCol.tasks.length).toBe(1);
+  it("updates wip limit to null for unlimited work-in-progress", async () => {
+    await updateColumnWipLimit("doing", null);
 
-    const readyCol = columns.find((c) => c.id === "ready")!;
-    const demoTask = readyCol.tasks.find((t) => t.id === "mock-task-drag-demo")!;
-    expect(demoTask).toBeDefined();
+    expect(database.execute).toHaveBeenCalledWith(
+      "UPDATE task_columns SET wip_limit = $1 WHERE id = $2",
+      [null, "doing"],
+    );
+  });
 
-    // In mock mode, drag task to doing and saveTaskOrder
-    readyCol.tasks = readyCol.tasks.filter((t) => t.id !== demoTask.id);
-    doingCol.tasks.push(demoTask);
-    await saveTaskOrder(columns);
+  it("updates multiple column wip limits in batch", async () => {
+    await updateColumnWipLimits({ doing: 8, verify: 4 });
 
-    expect(database.execute).not.toHaveBeenCalled();
-    expect(demoTask.columnId).toBe("doing");
-
-    // In mock mode, creating a task
-    const newTask = await createTask("测试新任务", "todo", null);
-    expect(database.execute).not.toHaveBeenCalled();
-    expect(newTask.title).toBe("测试新任务");
-
-    // In mock mode, updating a task
-    const updatedTags = await updateTask(demoTask.id, {
-      title: "更新后的演示任务",
-      description: "更新描述",
-      dueDate: null,
-      priority: "high",
-      columnId: "doing",
-      projectId: null,
-      tagNames: ["新标签"],
-      blockedReason: null,
-      checklist: [],
-      recurrenceRule: "none",
-      reviewNotes: "",
-    });
-    expect(database.execute).not.toHaveBeenCalled();
-    expect(updatedTags[0]?.name).toBe("新标签");
-
-    // In mock mode, trashing a task
-    const deletedAt = await trashTask(newTask.id);
-    expect(database.execute).not.toHaveBeenCalled();
-    expect(deletedAt).toBeDefined();
-
-    // Disable mock mode restores database queries
-    setMockMode(false);
-    expect(isMockMode()).toBe(false);
-
-    database.select.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]);
-    await loadTaskWall();
-    expect(database.select).toHaveBeenCalled();
+    expect(database.execute).toHaveBeenNthCalledWith(
+      1,
+      "UPDATE task_columns SET wip_limit = $1 WHERE id = $2",
+      [8, "doing"],
+    );
+    expect(database.execute).toHaveBeenNthCalledWith(
+      2,
+      "UPDATE task_columns SET wip_limit = $1 WHERE id = $2",
+      [4, "verify"],
+    );
   });
 });

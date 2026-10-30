@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import SurfaceMotion from "./SurfaceMotion.vue";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { Check, ChevronDown } from "lucide-vue-next";
 
 export interface SelectOption {
   value: string;
@@ -36,6 +38,7 @@ function positionMenu() {
   const opensAbove = availableBelow < desiredHeight && availableAbove > availableBelow;
   const menuHeight = Math.max(96, Math.min(desiredHeight, opensAbove ? availableAbove : availableBelow));
   menuStyle.value = {
+    "--surface-offset": opensAbove ? "-4px" : "4px",
     left: `${rect.left}px`,
     top: `${opensAbove ? rect.top - menuHeight - 6 : rect.bottom + 6}px`,
     width: `${rect.width}px`,
@@ -49,9 +52,8 @@ async function showMenu(direction = 0) {
   if (direction) {
     activeIndex.value = (activeIndex.value + direction + props.options.length) % props.options.length;
   }
-  open.value = true;
-  await nextTick();
   positionMenu();
+  open.value = true;
 }
 
 function closeMenu() {
@@ -139,10 +141,11 @@ onBeforeUnmount(() => {
       @keydown="handleKeydown"
     >
       <span>{{ selectedOption?.label }}</span>
-      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
+      <ChevronDown :size="14" aria-hidden="true" />
     </button>
 
     <Teleport to="body">
+    <SurfaceMotion kind="menu">
       <div
         v-if="open"
         :id="menuId"
@@ -164,11 +167,10 @@ onBeforeUnmount(() => {
           @click="choose(option)"
         >
           <span>{{ option.label }}</span>
-          <svg v-if="option.value === modelValue" viewBox="0 0 16 16" aria-hidden="true">
-            <path d="m3.5 8.2 2.7 2.7 6.3-6.3" />
-          </svg>
+          <Check v-if="option.value === modelValue" :size="14" aria-hidden="true" />
         </button>
       </div>
-    </Teleport>
+        </SurfaceMotion>
+  </Teleport>
   </div>
 </template>

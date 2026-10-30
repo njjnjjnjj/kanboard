@@ -15,7 +15,7 @@
         color: #262724;
         background: #e8e9e6;
         font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
-        transition: opacity 180ms ease, visibility 180ms ease;
+        transition: opacity 120ms cubic-bezier(.23, 1, .32, 1), visibility 120ms;
       }
 
       #startup-splash[aria-hidden="true"] { visibility: hidden; opacity: 0; }
@@ -41,7 +41,7 @@
         height: 100%;
         background: #285a78;
         content: "";
-        animation: startup-progress 1.15s ease-in-out infinite;
+        animation: startup-progress 1.15s linear infinite;
       }
 
       @keyframes startup-progress {

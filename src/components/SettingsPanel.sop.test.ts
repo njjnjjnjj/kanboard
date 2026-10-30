@@ -105,9 +105,9 @@ describe("SOP viewer with the real Vditor renderer", () => {
 
       const modal = () => document.querySelector(".markdown-fullscreen-modal")!;
       const content = () => modal().querySelector(".vditor-ir pre")!;
-      expect(content().textContent).toContain("任务接单与自主执行 SOP");
-      expect(content().textContent).toContain("验证方案标准参考模版");
-      expect(content().textContent).toContain("界面交互验收");
+      expect(content().textContent).toContain("Kanboard 任务执行 SOP");
+      expect(content().textContent).toContain("不强制统一章节、表格、复选清单或篇幅");
+      expect(content().textContent).toContain("图片附件按以下方式提交");
       expect(content().getAttribute("contenteditable")).toBe("false");
       expect(getComputedStyle(content()).opacity).toBe("1");
       expect(getComputedStyle(content()).cursor).toBe("text");

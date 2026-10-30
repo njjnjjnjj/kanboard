@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick } from "vue";
+import { Plus, X } from "lucide-vue-next";
 import type { ChecklistItem } from "../types";
 
 const props = defineProps<{ modelValue: ChecklistItem[] }>();
@@ -44,10 +45,15 @@ function removeItem(index: number) {
           @input="updateItem(index, { text: ($event.target as HTMLInputElement).value })"
           @keydown.enter.exact.prevent="addItem"
         />
-        <button type="button" aria-label="删除检查项" @click="removeItem(index)">×</button>
+        <button type="button" aria-label="删除检查项" @click="removeItem(index)">
+          <X :size="14" aria-hidden="true" />
+        </button>
       </div>
       <p v-if="!modelValue.length">还没有完成条件</p>
     </div>
-    <button class="task-checklist__add" type="button" @click="addItem">＋ 添加检查项</button>
+    <button class="task-checklist__add" type="button" @click="addItem">
+      <Plus :size="14" aria-hidden="true" />
+      <span>添加检查项</span>
+    </button>
   </div>
 </template>

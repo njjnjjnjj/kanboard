@@ -1,6 +1,7 @@
 import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 import type { Task } from "../types";
+import { AGENT_TASK_SOP_GUIDE } from "../drag/agentPrompt";
 import TaskCard from "./TaskCard.vue";
 
 const mockTask: Task = {
@@ -76,6 +77,11 @@ describe("TaskCard native drag", () => {
       "task-001",
     );
     expect(dataTransfer.effectAllowed).toBe("copyMove");
+    const prompt = setData.mock.calls.find(([type]) => type === "text/plain")![1];
+    expect(prompt).toContain("任务说明: 冷启动耗时降低至500ms以内");
+    expect(prompt).toContain(AGENT_TASK_SOP_GUIDE);
+    expect(prompt).toContain("get_custom_sop");
+    expect(prompt).not.toContain("update_task_description");
   });
 
   it("selects the card on click and preserves checkbox toggling", async () => {
@@ -112,6 +118,11 @@ describe("TaskCard native drag", () => {
     expect(writeText).toHaveBeenCalledWith(
       expect.stringContaining("D:/workspace/medchat-edge"),
     );
+    const prompt = writeText.mock.calls[0]![0];
+    expect(prompt).toContain("任务说明: 冷启动耗时降低至500ms以内");
+    expect(prompt).toContain(AGENT_TASK_SOP_GUIDE);
+    expect(prompt).toContain("get_custom_sop");
+    expect(prompt).not.toContain("update_task_description");
     expect(wrapper.emitted("select")).toBeUndefined();
     expect(copyBtn.classes()).toContain("task-card__copy-btn--copied");
     expect(wrapper.emitted("dispatchAgent")).toBeUndefined();

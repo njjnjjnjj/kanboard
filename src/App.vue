@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from "vue";
+import { createBoardMotion } from "./boardMotion";
+import SurfaceMotion from "./components/SurfaceMotion.vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type Event, type UnlistenFn } from "@tauri-apps/api/event";
 import { onAction } from "@tauri-apps/plugin-notification";
+import { Plus, Search, Trash2, Undo2 } from "lucide-vue-next";
 import BoardColumn from "./components/BoardColumn.vue";
 import FlowDashboard from "./components/FlowDashboard.vue";
 import ProjectEditor from "./components/ProjectEditor.vue";
@@ -15,7 +18,6 @@ import {
   createTask,
   deleteTag,
   deleteTask,
-  isMockMode,
   loadDeletedTasks,
   loadProjects,
   loadTags,
@@ -24,21 +26,30 @@ import {
   restoreTask,
   saveTaskOrder,
   saveProject,
-  setMockMode,
   sortDoneTasks,
   trashTask,
+  updateColumnWipLimit,
   updateTask,
 } from "./data/taskRepository";
 import { restoreDraggedCardToOrigin, type DragOrigin } from "./drag/dragPlaceholder";
 import { dragPointFrom, isPointInDragTrash } from "./drag/trashDropZone";
-import {
-  startFirstOnboarding,
-  startOnboarding,
-  stopOnboarding,
-} from "./onboarding";
+import { startFirstOnboarding, startOnboarding } from "./onboarding";
 import { calculateFlowMetrics } from "./flowMetrics";
 import { loadSopConfig, initSopListener } from "./data/sopRepository";
 import type { DeletedTask, FlowMetrics, Project, ProjectChanges, Tag, Task, TaskChanges, TaskColumn, TaskEvent, TaskScope } from "./types";
+
+const COLLAPSED_COLUMNS_KEY = "kanboard.collapsed-columns.v1";
+
+function loadCollapsedColumns(): Set<string> {
+  try {
+    const stored = localStorage.getItem(COLLAPSED_COLUMNS_KEY);
+    const saved: unknown = stored === null ? null : JSON.parse(stored);
+    if (Array.isArray(saved) && saved.every((id) => typeof id === "string")) return new Set(saved);
+  } catch {
+    // Invalid or unavailable storage falls back to the initial board layout.
+  }
+  return new Set(["done"]);
+}
 
 const columns = ref<TaskColumn[]>([]);
 const projects = ref<Project[]>([]);
@@ -51,6 +62,25 @@ const searchInput = ref<HTMLInputElement | null>(null);
 const searchQuery = ref("");
 const filterMode = ref<"all" | "due" | "high" | "aging">("all");
 const swimlaneMode = ref(false);
+const keyboardMotion = ref(false);
+const reducedMotionQuery = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+const reducedMotion = ref(reducedMotionQuery?.matches ?? false);
+const updateReducedMotion = (event: MediaQueryListEvent) => { reducedMotion.value = event.matches; };
+const motionEnabled = computed(() => !keyboardMotion.value && !reducedMotion.value);
+provide("motionEnabled", motionEnabled);
+provide("motionReduced", reducedMotion);
+const boardElement = ref<HTMLElement | null>(null);
+const boardMotion = createBoardMotion();
+const collapsedColumnIds = ref(loadCollapsedColumns());
+// Only manual actions update this preference; task navigation and drag expansion do not.
+const preferredCollapsedColumnIds = new Set(collapsedColumnIds.value);
+const columnLayout = computed(() => ({
+  minWidth: `${118 + columns.value.reduce((width, column) => width + (collapsedColumnIds.value.has(column.id) ? 64 : 180), 0)}px`,
+  gridTemplateColumns: columns.value.map((column) =>
+    collapsedColumnIds.value.has(column.id) ? "minmax(64px, 0fr)" : `minmax(180px, ${column.id === "doing" ? 1.18 : 1}fr)`,
+  ).join(" "),
+}));
+const hasTaskFilters = computed(() => Boolean(searchQuery.value.trim()) || filterMode.value !== "all");
 const dashboardOpen = ref(false);
 const settingsOpen = ref(false);
 const taskEvents = ref<TaskEvent[]>([]);
@@ -65,6 +95,18 @@ const saving = ref(false);
 const errorMessage = ref("");
 const statusMessage = ref("");
 const draggingTask = ref(false);
+watch(() => [...collapsedColumnIds.value], async (current, previous) => {
+  const root = boardElement.value;
+  if (!root || !motionEnabled.value || draggingTask.value) { boardMotion.cancel(); return; }
+  const changed = new Set([...current, ...previous].filter((id) => current.includes(id) !== previous.includes(id)));
+  const play = boardMotion.capture(root, changed);
+  await nextTick();
+  play();
+});
+watch([scope, swimlaneMode], () => boardMotion.cancel());
+watch(reducedMotion, (value) => { if (value) boardMotion.cancel(); });
+const usePointerMotion = () => { keyboardMotion.value = false; };
+const useKeyboardMotion = () => { keyboardMotion.value = true; };
 const trashActive = ref(false);
 const dragOrigin = ref<DragOrigin | null>(null);
 const dropReceivedInside = ref(false);
@@ -72,42 +114,9 @@ const dragSnapshot = ref<TaskColumn[] | null>(null);
 const projectEditorOpen = ref(false);
 const editingProject = ref<Project | null>(null);
 
-const onboardingActive = ref(false);
-
-async function startOnboardingFlow() {
-  if (onboardingActive.value) {
-    startOnboarding({
-      onExit: exitOnboardingFlow,
-    });
-    return;
-  }
-
-  setMockMode(true);
-  onboardingActive.value = true;
-  scope.value = { kind: "all" };
-  filterMode.value = "all";
-  searchQuery.value = "";
-  swimlaneMode.value = false;
-  selectedTaskId.value = null;
-
-  await load({ initial: false, silent: true });
-  await nextTick();
-
-  startOnboarding({
-    onExit: exitOnboardingFlow,
-  });
-}
-
-async function exitOnboardingFlow() {
-  if (!onboardingActive.value) return;
-  stopOnboarding();
-  setMockMode(false);
-  onboardingActive.value = false;
-  await load({ initial: false, silent: true });
-  announce("已退出引导，已无缝恢复真实任务");
-}
-
 let pendingRefreshAfterDrag = false;
+const autoExpandedColumnIds = new Set<string>();
+let dropIntoExpandedColumnId: string | null = null;
 let queuedRefresh = false;
 let orderQueue: Promise<boolean> = Promise.resolve(true);
 let statusTimer: number | undefined;
@@ -215,6 +224,33 @@ function announce(message: string) {
   }, 2200);
 }
 provide("announce", announce);
+
+function toggleColumnCollapse(columnId: string) {
+  if (draggingTask.value) return;
+  if (collapsedColumnIds.value.has(columnId)) {
+    collapsedColumnIds.value.delete(columnId);
+    preferredCollapsedColumnIds.delete(columnId);
+  } else {
+    collapsedColumnIds.value.add(columnId);
+    preferredCollapsedColumnIds.add(columnId);
+  }
+  saveCollapsedColumns();
+}
+
+function expandAllColumns() {
+  if (draggingTask.value) return;
+  collapsedColumnIds.value.clear();
+  preferredCollapsedColumnIds.clear();
+  saveCollapsedColumns();
+}
+
+function saveCollapsedColumns() {
+  try {
+    localStorage.setItem(COLLAPSED_COLUMNS_KEY, JSON.stringify([...preferredCollapsedColumnIds]));
+  } catch {
+    announce("折叠状态已更新，但无法保存偏好");
+  }
+}
 
 function reconcileColumns(currentColumns: TaskColumn[], newColumns: TaskColumn[]) {
   if (currentColumns.length === 0) {
@@ -354,7 +390,6 @@ async function load(options: { initial?: boolean; silent?: boolean } = {}) {
 }
 
 async function handleBackgroundRefresh() {
-  if (isMockMode()) return;
   if (draggingTask.value) {
     pendingRefreshAfterDrag = true;
     return;
@@ -376,6 +411,7 @@ async function addTask() {
       ? projects.value.find((project) => project.id === projectId) ?? null
       : null;
     target.tasks.push(task);
+    collapsedColumnIds.value.delete(target.id);
     quickTitle.value = "";
     selectedTaskId.value = task.id;
     await nextTick();
@@ -453,7 +489,7 @@ async function saveChanges(taskId: string, changes: TaskChanges) {
     const previousColumnId = task.columnId;
     if (changes.columnId === "blocked" && !changes.blockedReason) changes.blockedReason = "other";
     const shouldRepeat = changes.columnId === "done" && previousColumnId !== "done" && changes.recurrenceRule !== "none";
-    const savedTags = await updateTask(taskId, changes);
+    const savedTags = await updateTask(taskId, { ...changes, descriptionBase: changes.descriptionBase ?? task.description });
     const moved = changes.columnId !== previousColumnId;
     if (moved) {
       const removed = removeTaskFromWall(taskId);
@@ -466,7 +502,7 @@ async function saveChanges(taskId: string, changes: TaskChanges) {
         }
       }
     }
-    const { tagNames: _tagNames, ...taskChanges } = changes;
+    const { tagNames: _tagNames, descriptionBase: _descriptionBase, ...taskChanges } = changes;
     Object.assign(task, taskChanges, {
       dueDate: changes.dueDate || null,
       project: changes.projectId
@@ -506,7 +542,7 @@ async function saveChanges(taskId: string, changes: TaskChanges) {
     announce("任务已保存");
   } catch (error) {
     console.error(error);
-    announce("保存失败，请重试");
+    announce(String(error));
   } finally {
     saving.value = false;
   }
@@ -629,17 +665,31 @@ async function removeTask(taskId: string) {
   }
 }
 
-/** Only real pointer coordinates decide whether a drag ended on the delete zone. */
+/** Use the same pointer hit test for the delete zone and collapsed columns. */
 function trackTrashPointer(event: MouseEvent | TouchEvent | DragEvent) {
-  const over = isPointInDragTrash(dragPointFrom(event));
+  const point = dragPointFrom(event);
+  const over = isPointInDragTrash(point);
   trashActive.value = over;
   // While the pointer is on "delete" the card belongs to no column: keep it on the
   // slot it came from instead of the column the pointer last hovered.
   if (over) restoreDraggedCardToOrigin(dragOrigin.value);
+  else if (point && draggingTask.value) {
+    const column = document.elementFromPoint(point.x, point.y)?.closest<HTMLElement>(".board-column--collapsed");
+    if (column?.dataset.column) {
+      autoExpandedColumnIds.add(column.dataset.column);
+      collapsedColumnIds.value.delete(column.dataset.column);
+    }
+  }
 }
 
-function handleInternalDrop() {
+function handleInternalDrop(event: DragEvent) {
   dropReceivedInside.value = true;
+  const column = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-column]") : null;
+  if (!draggingTask.value || !column?.dataset.column || !autoExpandedColumnIds.has(column.dataset.column)) return;
+  const lane = column.closest<HTMLElement>(".swimlane-row");
+  const task = dragOrigin.value && findTask(dragOrigin.value.taskId);
+  if (lane && lane.dataset.projectId !== (task?.projectId ?? "")) return;
+  dropIntoExpandedColumnId = column.dataset.column;
 }
 
 function handleWindowDragStart() {
@@ -662,6 +712,7 @@ function handleWindowDragEnter(event: DragEvent) {
   if (event.dataTransfer) {
     event.dataTransfer.dropEffect = "move";
   }
+  if (draggingTask.value) trackTrashPointer(event);
 }
 
 function stopTrashTracking() {
@@ -677,6 +728,9 @@ function startTrashTracking() {
 }
 
 function beginTaskDrag(columnId: string, origin: { taskId: string; index: number }) {
+  boardMotion.cancel();
+  autoExpandedColumnIds.clear();
+  dropIntoExpandedColumnId = null;
   dragOrigin.value = { columnId, taskId: origin.taskId, index: origin.index };
   dragSnapshot.value = JSON.parse(JSON.stringify(columns.value));
   dropReceivedInside.value = false;
@@ -688,39 +742,59 @@ async function handleTaskDrop(result: { taskId: string; intoTrash: boolean }) {
   const origin = dragOrigin.value;
   const wasInternalDrop = dropReceivedInside.value;
   const snapshot = dragSnapshot.value;
+  const expandedDropColumnId = dropIntoExpandedColumnId;
+  const temporarilyExpanded = [...autoExpandedColumnIds];
+  autoExpandedColumnIds.clear();
+  dropIntoExpandedColumnId = null;
   dragSnapshot.value = null;
   draggingTask.value = false;
   stopTrashTracking();
 
-  if (pendingRefreshAfterDrag) {
-    pendingRefreshAfterDrag = false;
-    await load({ initial: false, silent: true });
-  }
-
-  if (result.intoTrash) {
-    // Deleting is decided here and nowhere else, so a card released over the
-    // delete zone can never stay behind in the column beneath it.
-    if (result.taskId) await removeTask(result.taskId);
-    return;
-  }
-
-  // When drag ends outside without an internal drop (e.g. dragged out to Codex or cancelled),
-  // revert card to snapshot and do not save new order.
-  const isExternalDrop = origin !== null && !wasInternalDrop;
-  if (isExternalDrop) {
-    if (snapshot) {
-      columns.value = snapshot;
+  try {
+    if (pendingRefreshAfterDrag) {
+      pendingRefreshAfterDrag = false;
+      await load({ initial: false, silent: true });
     }
-    return;
-  }
 
-  const saved = await queueOrderSave();
-  const movedTask = findTask(result.taskId);
-  if (saved && origin?.columnId !== "done" && movedTask?.columnId === "done" && movedTask.recurrenceRule !== "none") {
-    await createRecurringSuccessor(movedTask);
-    await load({ initial: false, silent: true });
-    announce("任务已完成，下一次任务已加入就绪");
+    if (result.intoTrash) {
+      // Deleting is decided here and nowhere else, so a card released over the
+      // delete zone can never stay behind in the column beneath it.
+      if (result.taskId) await removeTask(result.taskId);
+      return;
+    }
+
+    // When drag ends outside without an internal drop (e.g. dragged out to Codex or cancelled),
+    // revert card to snapshot and do not save new order.
+    const isExternalDrop = origin !== null && !wasInternalDrop;
+    if (isExternalDrop) {
+      if (snapshot) columns.value = snapshot;
+      return;
+    }
+
+    // A quick release may arrive before the newly mounted Sortable list receives
+    // its first dragover. Honor that column instead of the last list passed over.
+    const expandedDropColumn = columns.value.find((column) => column.id === expandedDropColumnId);
+    if (origin && expandedDropColumn && !expandedDropColumn.tasks.some((task) => task.id === origin.taskId)) {
+      const task = removeTaskFromWall(origin.taskId);
+      if (task) expandedDropColumn.tasks.push(task);
+    }
+
+    const saved = await queueOrderSave();
+    const movedTask = findTask(result.taskId);
+    if (saved && origin?.columnId !== "done" && movedTask?.columnId === "done" && movedTask.recurrenceRule !== "none") {
+      await createRecurringSuccessor(movedTask);
+      await load({ initial: false, silent: true });
+      announce("任务已完成，下一次任务已加入就绪");
+    }
+    checkWipLimitExceeded();
+  } finally {
+    for (const columnId of temporarilyExpanded) {
+      if (preferredCollapsedColumnIds.has(columnId)) collapsedColumnIds.value.add(columnId);
+    }
   }
+}
+
+function checkWipLimitExceeded() {
   nextTick(() => {
     const exceeded = visibleColumns.value.find((column) =>
       column.wipLimit !== null && (column.totalTaskCount ?? column.tasks.length) > column.wipLimit,
@@ -729,8 +803,30 @@ async function handleTaskDrop(result: { taskId: string; intoTrash: boolean }) {
   });
 }
 
+async function handleColumnWipLimit(columnId: string, newLimit: number | null) {
+  try {
+    await updateColumnWipLimit(columnId, newLimit);
+    const col = columns.value.find((c) => c.id === columnId);
+    if (col) {
+      col.wipLimit = newLimit;
+      announce(`${col.title}上限已更新为 ${newLimit ? `${newLimit} 项` : "无上限"}`);
+    }
+    checkWipLimitExceeded();
+  } catch (error) {
+    announce(`更新上限失败：${String(error)}`);
+  }
+}
+
+function handleUpdateWipLimits(limits: { doing: number | null; verify: number | null }) {
+  const doingCol = columns.value.find((c) => c.id === "doing");
+  if (doingCol) doingCol.wipLimit = limits.doing;
+  const verifyCol = columns.value.find((c) => c.id === "verify");
+  if (verifyCol) verifyCol.wipLimit = limits.verify;
+  checkWipLimitExceeded();
+}
+
 function selectRelativeTask(offset: number) {
-  const tasks = visibleColumns.value.flatMap((column) => column.tasks);
+  const tasks = visibleColumns.value.filter((column) => !collapsedColumnIds.value.has(column.id)).flatMap((column) => column.tasks);
   if (!tasks.length) return;
   const currentIndex = tasks.findIndex((task) => task.id === selectedTaskId.value);
   const nextIndex = currentIndex < 0
@@ -764,6 +860,7 @@ async function openTask(taskId: string) {
 
   const targetTask = allTasks.value.find((item) => item.id === taskId);
   if (targetTask) {
+    collapsedColumnIds.value.delete(targetTask.columnId);
     if (searchQuery.value && !matchesFilters(targetTask)) {
       searchQuery.value = "";
     }
@@ -786,6 +883,7 @@ async function openTask(taskId: string) {
   }
   selectedTaskId.value = taskId;
   await nextTick();
+  document.querySelector<HTMLElement>(`[data-task-id="${taskId}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
   document.querySelector<HTMLTextAreaElement>("[data-inspector-title]")?.focus();
 }
 
@@ -850,6 +948,8 @@ async function permanentlyDeleteTask(task: DeletedTask) {
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
+  keyboardMotion.value = true;
+  if (event.defaultPrevented) return;
   const target = event.target as HTMLElement;
   const editing = /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable;
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
@@ -885,6 +985,10 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 }
 
 onMounted(async () => {
+  window.addEventListener("pointerdown", usePointerMotion, true);
+  window.addEventListener("keydown", useKeyboardMotion, true);
+  window.addEventListener("resize", boardMotion.cancel);
+  reducedMotionQuery?.addEventListener("change", updateReducedMotion);
   loadSopConfig();
   initSopListener();
   window.addEventListener("keydown", handleGlobalKeydown);
@@ -953,14 +1057,18 @@ onMounted(async () => {
   const splash = document.querySelector<HTMLElement>("#startup-splash");
   if (splash) {
     splash.setAttribute("aria-hidden", "true");
-    window.setTimeout(() => splash.remove(), 180);
+    window.setTimeout(() => splash.remove(), 120);
   }
   if (errorMessage.value) return;
-  startFirstOnboarding(startOnboardingFlow);
+  startFirstOnboarding();
 });
 
 onBeforeUnmount(() => {
-  stopOnboarding();
+  boardMotion.cancel();
+  window.removeEventListener("pointerdown", usePointerMotion, true);
+  window.removeEventListener("keydown", useKeyboardMotion, true);
+  window.removeEventListener("resize", boardMotion.cancel);
+  reducedMotionQuery?.removeEventListener("change", updateReducedMotion);
   stopTrashTracking();
   window.removeEventListener("keydown", handleGlobalKeydown);
   window.removeEventListener("dragstart", handleWindowDragStart, true);
@@ -983,7 +1091,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :data-input-mode="keyboardMotion ? 'keyboard' : 'pointer'" @keydown.capture="keyboardMotion = true" @pointerdown.capture="keyboardMotion = false">
     <header class="app-header">
       <div class="wall-heading">
         <span class="wall-heading__mark" aria-hidden="true" />
@@ -991,7 +1099,7 @@ onBeforeUnmount(() => {
         <span>{{ totalOpenTaskCount }} 项未完成</span>
       </div>
       <form class="quick-add" data-tour="quick-capture" @submit.prevent="addTask">
-        <span class="quick-add__mark" aria-hidden="true">＋</span>
+        <span class="quick-add__mark" aria-hidden="true"><Plus :size="16" aria-hidden="true" stroke-width="2.5" /></span>
         <input
           ref="quickInput"
           v-model="quickTitle"
@@ -1009,20 +1117,12 @@ onBeforeUnmount(() => {
           data-tour="guide-help"
           type="button"
           :disabled="loading || Boolean(errorMessage)"
-          @click="startOnboardingFlow()"
+          @click="startOnboarding()"
         >使用引导</button>
         <button class="text-button guide-button" type="button" @click="settingsOpen = true">设置</button>
         <div class="capture-shortcut" aria-hidden="true"><kbd>Ctrl K</kbd><span>快速记录</span></div>
       </div>
     </header>
-
-    <div v-if="onboardingActive" class="onboarding-banner" role="status">
-      <div class="onboarding-banner__content">
-        <span class="onboarding-banner__tag">引导演示</span>
-        <span>当前已加载 Kanboard 演示任务，支持拖拽与功能探索，所有操作不影响本地数据库。</span>
-      </div>
-      <button class="onboarding-banner__close" type="button" @click="exitOnboardingFlow">退出引导</button>
-    </div>
 
     <div v-if="loading" class="system-state" role="status">正在打开本地任务墙…</div>
     <div v-else-if="errorMessage && !hasLoadedOnce" class="system-state system-state--error" role="alert">
@@ -1049,7 +1149,7 @@ onBeforeUnmount(() => {
         @restore="restoreDeletedTask"
         @delete="permanentlyDeleteTask"
       />
-      <section v-else class="board-workspace" :aria-label="scopeTitle">
+      <section v-else ref="boardElement" class="board-workspace" :aria-label="scopeTitle" @scroll.capture="boardMotion.cancel">
         <header class="board-context">
           <div>
             <span v-if="activeProject" class="project-dot" :style="{ backgroundColor: activeProject.color }" aria-hidden="true" />
@@ -1058,7 +1158,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="board-tools">
             <label class="board-search" data-tour="search-filter">
-              <span aria-hidden="true">⌕</span>
+              <span class="board-search__icon" aria-hidden="true"><Search :size="14" aria-hidden="true" /></span>
               <input ref="searchInput" v-model="searchQuery" type="search" placeholder="搜索任务 /" aria-label="搜索任务" />
             </label>
             <div class="filter-tabs" data-tour="flow-filters" aria-label="任务筛选">
@@ -1067,6 +1167,7 @@ onBeforeUnmount(() => {
               <button type="button" :class="{ active: filterMode === 'high' }" @click="filterMode = 'high'">高优先级</button>
               <button type="button" :class="{ active: filterMode === 'aging' }" @click="filterMode = 'aging'">长期 WIP</button>
             </div>
+            <button v-if="collapsedColumnIds.size" class="tool-button" type="button" :disabled="draggingTask" @click="expandAllColumns">展开全部</button>
             <button class="tool-button" data-tour="swimlane" type="button" :aria-pressed="swimlaneMode" :disabled="scope.kind === 'project'" @click="swimlaneMode = !swimlaneMode">泳道</button>
             <button class="tool-button" data-tour="flow-dashboard" type="button" @click="dashboardOpen = true">统计</button>
             <button v-if="activeProject" class="text-button" type="button" @click="openProjectEditor(activeProject)">项目设置</button>
@@ -1075,6 +1176,7 @@ onBeforeUnmount(() => {
       <div
         v-if="!swimlaneMode || scope.kind === 'project'"
         class="board-columns"
+        :style="{ gridTemplateColumns: columnLayout.gridTemplateColumns }"
         data-tour="board-columns"
         :class="{ 'board-columns--trash-target': trashActive }"
         aria-label="个人任务墙"
@@ -1084,28 +1186,38 @@ onBeforeUnmount(() => {
           :key="column.id"
           :column="column"
           :selected-task-id="selectedTaskId"
+          :collapsed="collapsedColumnIds.has(column.id)"
+          :collapse-disabled="draggingTask"
+          :show-matches="hasTaskFilters"
+          @toggle-collapse="toggleColumnCollapse"
           @select="openTask"
           @toggle="toggleTask"
           @update-tasks="updateColumnTasks"
           @task-drop="handleTaskDrop"
           @drag-start="beginTaskDrag(column.id, $event)"
+          @update-wip-limit="handleColumnWipLimit"
         />
       </div>
       <div v-else class="swimlane-board" aria-label="按项目分组的任务墙">
-        <section v-for="lane in swimlanes" :key="lane.id" class="swimlane-row">
+        <section v-for="lane in swimlanes" :key="lane.id" class="swimlane-row" :style="{ minWidth: columnLayout.minWidth }" :data-project-id="lane.projectId ?? ''">
           <header><i :style="{ backgroundColor: lane.color }" /><strong>{{ lane.name }}</strong></header>
-          <div class="swimlane-columns">
+          <div class="swimlane-columns" :style="{ gridTemplateColumns: columnLayout.gridTemplateColumns }">
             <BoardColumn
               v-for="column in lane.columns"
               :key="`${lane.id}-${column.id}`"
               :column="column"
               :selected-task-id="selectedTaskId"
+              :collapsed="collapsedColumnIds.has(column.id)"
+              :collapse-disabled="draggingTask"
+              :show-matches="hasTaskFilters"
+              @toggle-collapse="toggleColumnCollapse"
               :drag-group="`lane-${lane.id}`"
               @select="openTask"
               @toggle="toggleTask"
               @update-tasks="(columnId, tasks) => updateColumnTasks(columnId, tasks, lane.projectId)"
               @task-drop="handleTaskDrop"
               @drag-start="beginTaskDrag(column.id, $event)"
+              @update-wip-limit="handleColumnWipLimit"
             />
           </div>
         </section>
@@ -1127,16 +1239,12 @@ onBeforeUnmount(() => {
         @click="recentlyDeleted && undoDelete()"
       >
         <span v-if="recentlyDeleted" :key="recentlyDeleted.task.id" class="drag-trash__countdown" aria-hidden="true" />
-        <svg v-if="recentlyDeleted" viewBox="0 0 20 20" aria-hidden="true">
-          <path d="M6.5 6H3.5V3M3.8 6a7 7 0 1 1-.3 7" />
-        </svg>
-        <svg v-else viewBox="0 0 20 20" aria-hidden="true">
-          <path d="M3.5 5.5h13M8 3.5h4M6 5.5l.6 11h6.8l.6-11M8.2 8.2v5.5M11.8 8.2v5.5" />
-        </svg>
+        <Undo2 v-if="recentlyDeleted" :size="18" aria-hidden="true" />
+        <Trash2 v-else :size="18" aria-hidden="true" />
         <span>{{ recentlyDeleted ? `撤回删除 · ${undoSeconds} 秒` : "拖到这里删除" }}</span>
       </button>
       </section>
-      <Transition name="task-drawer">
+      <SurfaceMotion kind="drawer" panel=".task-inspector">
         <div v-if="selectedTask" class="task-drawer-layer" @click.self="closeTask">
           <TaskInspector
             :task="selectedTask"
@@ -1149,7 +1257,7 @@ onBeforeUnmount(() => {
             @close="closeTask"
           />
         </div>
-      </Transition>
+      </SurfaceMotion>
     </main>
 
     <ProjectEditor
@@ -1161,11 +1269,17 @@ onBeforeUnmount(() => {
     />
 
     <FlowDashboard :open="dashboardOpen" :metrics="metrics" @close="dashboardOpen = false" />
-    <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" @announce="announce" />
+    <SettingsPanel
+      :open="settingsOpen"
+      :columns="columns"
+      @close="settingsOpen = false"
+      @announce="announce"
+      @update-wip-limits="handleUpdateWipLimits"
+    />
 
     <div class="sr-status" role="status" aria-live="polite">{{ statusMessage }}</div>
-    <Transition name="toast">
+    <SurfaceMotion kind="toast">
       <div v-if="statusMessage" class="toast-message">{{ statusMessage }}</div>
-    </Transition>
+    </SurfaceMotion>
   </div>
 </template>

@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import SurfaceMotion from "./SurfaceMotion.vue";
 import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { X } from "lucide-vue-next";
 import type { Project, ProjectChanges } from "../types";
 import DateInput from "./DateInput.vue";
 import MarkdownEditor from "./MarkdownEditor.vue";
@@ -85,6 +87,7 @@ function submit() {
 </script>
 
 <template>
+  <SurfaceMotion kind="dialog" panel=".project-editor">
   <div v-if="open" class="project-editor-backdrop" @mousedown.self="emit('close')">
     <form
       class="project-editor"
@@ -99,7 +102,7 @@ function submit() {
           <h2 id="project-editor-title">{{ project ? "编辑项目" : "新建项目" }}</h2>
           <p>项目保存共同背景与资料，任务只记录具体行动。</p>
         </div>
-        <button class="icon-button" type="button" aria-label="关闭项目编辑" @click="emit('close')"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" /></svg></button>
+        <button class="icon-button" type="button" aria-label="关闭项目编辑" @click="emit('close')"><X :size="18" aria-hidden="true" /></button>
       </header>
 
       <label class="field">
@@ -169,6 +172,7 @@ function submit() {
 
     <!-- 项目备忘全屏沉浸编辑弹层 -->
     <Teleport to="body">
+      <SurfaceMotion kind="dialog">
       <div
         v-if="fullscreen"
         class="markdown-fullscreen-modal"
@@ -208,6 +212,8 @@ function submit() {
           />
         </main>
       </div>
+          </SurfaceMotion>
     </Teleport>
   </div>
+  </SurfaceMotion>
 </template>

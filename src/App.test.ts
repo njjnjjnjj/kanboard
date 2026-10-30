@@ -35,15 +35,6 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
   onAction: vi.fn(async () => ({ unregister: vi.fn() })),
 }));
 
-const onboardingMock = vi.hoisted(() => ({
-  startOnboarding: vi.fn(),
-  stopOnboarding: vi.fn(),
-  startFirstOnboarding: vi.fn(),
-  notifyOnboardingTaskDropped: vi.fn(),
-  isOnboardingActive: vi.fn(() => false),
-}));
-vi.mock("./onboarding", () => onboardingMock);
-
 const repository = vi.hoisted(() => ({
   createTask: vi.fn(),
   deleteTag: vi.fn(),
@@ -59,8 +50,7 @@ const repository = vi.hoisted(() => ({
   createRecurringSuccessor: vi.fn(),
   restoreTask: vi.fn(),
   trashTask: vi.fn(),
-  isMockMode: vi.fn(() => false),
-  setMockMode: vi.fn(),
+  updateColumnWipLimit: vi.fn(),
   sortDoneTasks: (tasks: any[]) =>
     tasks.sort((a, b) => {
       const timeA = a.completedAt ? Date.parse(a.completedAt) : a.updatedAt ? Date.parse(a.updatedAt) : 0;
@@ -116,6 +106,9 @@ function wall(): TaskColumn[] {
 describe("personal task wall", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.removeItem("kanboard.collapsed-columns.v1");
+    Element.prototype.scrollIntoView = vi.fn();
+    document.elementFromPoint = vi.fn(() => null);
     taskCreatedListener.value = undefined;
     openTaskListener.value = undefined;
     mcpStatusTransitionListener.value = undefined;
@@ -134,6 +127,402 @@ describe("personal task wall", () => {
     repository.deleteTag.mockResolvedValue(undefined);
   });
 
+  it("defaults to collapsed done, remembers manual choices and persists expand-all without task writes", async () => {
+    const wrapper = mount(App);
+    await flushPromises();
+    expect(wrapper.get("[data-column='done']").classes()).toContain("board-column--collapsed");
+    expect(wrapper.findAll(".board-column--collapsed")).toHaveLength(1);
+    const titles = ["收集箱", "待办池", "就绪", "进行中", "待验证", "阻塞"];
+    for (const title of titles) await wrapper.get(`[aria-label='收起${title}列']`).trigger("click");
+    expect(wrapper.findAll(".board-column--collapsed")).toHaveLength(7);
+    expect(wrapper.findAllComponents(VueDraggable).filter((list) => !list.props("disabled"))).toHaveLength(0);
+    expect(wrapper.get(".board-columns").attributes("style")).toContain(Array(7).fill("minmax(64px, 0fr)").join(" "));
+    await wrapper.get("[aria-label='展开进行中列']").trigger("click");
+    await wrapper.get("[aria-label='展开待验证列']").trigger("click");
+    expect(wrapper.findAllComponents(VueDraggable).filter((list) => !list.props("disabled"))).toHaveLength(2);
+    expect(wrapper.findAll(".board-column--collapsed")).toHaveLength(5);
+    await wrapper.findAll("button").find((button) => button.text() === "展开全部")!.trigger("click");
+    expect(wrapper.findAllComponents(VueDraggable)).toHaveLength(7);
+    expect(localStorage.getItem("kanboard.collapsed-columns.v1")).toBe("[]");
+    expect(wrapper.get("[data-task-id='task-1']").text()).toContain("整理个人任务");
+    expect(repository.updateTask).not.toHaveBeenCalled();
+    expect(repository.saveTaskOrder).not.toHaveBeenCalled();
+    await wrapper.get("[aria-label='收起收集箱列']").trigger("click");
+    wrapper.unmount();
+    const reopened = mount(App);
+    await flushPromises();
+    expect(reopened.findAll(".board-column--collapsed")).toHaveLength(1);
+    expect(reopened.get("[data-column='todo']").classes()).toContain("board-column--collapsed");
+    expect(reopened.get("[data-column='done']").classes()).not.toContain("board-column--collapsed");
+    reopened.unmount();
+  });
+
+  it.each(["{invalid", '{"done":true}'])("uses the default layout if the saved preference is invalid: %s", async (saved) => {
+    localStorage.setItem("kanboard.collapsed-columns.v1", saved);
+    const wrapper = mount(App);
+    await flushPromises();
+    expect(wrapper.findAll(".board-column--collapsed")).toHaveLength(1);
+    expect(wrapper.get("[data-column='done']").classes()).toContain("board-column--collapsed");
+    wrapper.unmount();
+  });
+
+  it("remembers an explicitly expanded done column instead of reapplying the default", async () => {
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get("[aria-label='展开已完成列']").trigger("click");
+    wrapper.unmount();
+    const reopened = mount(App);
+    await flushPromises();
+    expect(reopened.findAll(".board-column--collapsed")).toHaveLength(0);
+    expect(localStorage.getItem("kanboard.collapsed-columns.v1")).toBe("[]");
+    reopened.unmount();
+  });
+
+  it("does not persist task-navigation expansion when another column is manually changed", async () => {
+    localStorage.setItem("kanboard.collapsed-columns.v1", JSON.stringify(["todo", "done"]));
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+    await openTaskListener.value?.({ payload: "task-1" });
+    await flushPromises();
+    expect(wrapper.get("[data-column='todo']").classes()).not.toContain("board-column--collapsed");
+    await wrapper.get("[aria-label='关闭任务详情']").trigger("click");
+    await wrapper.get("[aria-label='收起待办池列']").trigger("click");
+    expect(JSON.parse(localStorage.getItem("kanboard.collapsed-columns.v1")!)).toEqual(["todo", "done", "backlog"]);
+    wrapper.unmount();
+    const reopened = mount(App);
+    await flushPromises();
+    expect(reopened.get("[data-column='todo']").classes()).toContain("board-column--collapsed");
+    reopened.unmount();
+  });
+
+  it("responds instantly to keyboard input and resumes pointer motion on pointerdown", async () => {
+    const wrapper = mount(App);
+    await flushPromises();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab" }));
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get(".app-shell").attributes("data-input-mode")).toBe("keyboard");
+    expect(wrapper.findAllComponents(VueDraggable)[0]!.props("animation")).toBe(0);
+    await wrapper.get(".app-shell").trigger("pointerdown");
+    expect(wrapper.get(".app-shell").attributes("data-input-mode")).toBe("pointer");
+    expect(wrapper.findAllComponents(VueDraggable)[0]!.props("animation")).toBe(120);
+    const search = wrapper.get("[aria-label='搜索任务']");
+    search.element.addEventListener("keydown", (event) => event.stopPropagation());
+    await search.trigger("keydown", { key: "Tab" });
+    expect(wrapper.get(".app-shell").attributes("data-input-mode")).toBe("keyboard");
+    await wrapper.get(".app-shell").trigger("pointerdown");
+    const portal = document.createElement("button");
+    document.body.append(portal);
+    portal.addEventListener("keydown", (event) => event.stopPropagation());
+    portal.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get(".app-shell").attributes("data-input-mode")).toBe("keyboard");
+    portal.remove();
+    wrapper.unmount();
+  });
+
+  it("responds to live reduced-motion changes and removes its listener on unmount", async () => {
+    const query = { matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() };
+    vi.stubGlobal("matchMedia", vi.fn(() => query));
+    const wrapper = mount(App);
+    try {
+      await flushPromises();
+      expect(wrapper.findAllComponents(VueDraggable)[0]!.props("animation")).toBe(0);
+      const onChange = query.addEventListener.mock.calls[0]![1];
+      onChange({ matches: false });
+      await wrapper.vm.$nextTick();
+      expect(wrapper.findAllComponents(VueDraggable)[0]!.props("animation")).toBe(120);
+      wrapper.unmount();
+      expect(query.removeEventListener).toHaveBeenCalledWith("change", onChange);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("shows matches in collapsed columns while keeping full WIP under combined filters", async () => {
+    const tasks = wall();
+    tasks[3]!.tasks = [
+      { ...existingTask, id: "high", columnId: "doing", priority: "high", title: "目标任务" },
+      { ...existingTask, id: "normal", columnId: "doing", title: "目标普通" },
+      { ...existingTask, id: "other", columnId: "doing", priority: "high", title: "其他任务" },
+    ];
+    repository.loadTaskWall.mockResolvedValue(tasks);
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get("[aria-label='收起进行中列']").trigger("click");
+    await wrapper.get("[aria-label='搜索任务']").setValue("目标");
+    await wrapper.findAll(".filter-tabs button").find((button) => button.text() === "高优先级")!.trigger("click");
+    const doing = wrapper.get("[data-column='doing']");
+    expect(doing.get(".board-column__matches").text()).toBe("匹配 1");
+    expect(doing.get(".board-column__header").text()).toContain("3 / 2");
+    expect(doing.classes()).toContain("board-column--wip-exceeded");
+    await wrapper.get("[aria-label='搜索任务']").setValue("无匹配");
+    expect(doing.get(".board-column__matches").text()).toBe("匹配 0");
+    await wrapper.get("[aria-label='搜索任务']").setValue("目标");
+    await wrapper.get("[aria-label='展开进行中列']").trigger("click");
+    expect(doing.findAll(".task-card")).toHaveLength(1);
+    expect(doing.get("[data-task-id='high']").text()).toContain("目标任务");
+    expect(repository.updateTask).not.toHaveBeenCalled();
+    expect(repository.saveTaskOrder).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("shares collapsed columns across swimlanes and project scopes with unique heading IDs", async () => {
+    repository.loadProjects.mockResolvedValue([
+      { id: "p1", name: "项目一", color: "#285a78", description: "", path: "", targetDate: null, status: "active" },
+      { id: "p2", name: "项目二", color: "#285a78", description: "", path: "", targetDate: null, status: "active" },
+    ]);
+    const tasks = wall();
+    tasks[0]!.tasks = [
+      { ...existingTask, projectId: "p1" },
+      { ...existingTask, id: "task-2", projectId: "p2" },
+    ];
+    repository.loadTaskWall.mockResolvedValue(tasks);
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get("[aria-label='收起收集箱列']").trigger("click");
+    await wrapper.get("[data-tour='swimlane']").trigger("click");
+    expect(wrapper.findAll(".swimlane-row")).toHaveLength(2);
+    expect(wrapper.findAll("[data-column='todo'].board-column--collapsed")).toHaveLength(2);
+    const headings = wrapper.findAll(".board-column h2").map((heading) => heading.attributes("id"));
+    expect(new Set(headings).size).toBe(14);
+    await wrapper.findAll("[aria-label='展开收集箱列']")[0]!.trigger("click");
+    expect(wrapper.findAll("[data-column='todo'].board-column--collapsed")).toHaveLength(0);
+    await wrapper.findAll("[aria-label='收起收集箱列']")[1]!.trigger("click");
+    await wrapper.get(".workspace-nav__section .workspace-nav__row").trigger("click");
+    expect(wrapper.get("[data-column='todo']").classes()).toContain("board-column--collapsed");
+    await wrapper.get("[aria-label='展开收集箱列']").trigger("click");
+    expect(wrapper.findAll(".task-card")).toHaveLength(1);
+    expect(repository.saveTaskOrder).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("unfolds the target column and clears conflicting search when a notification opens a task", async () => {
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+    await wrapper.get("[aria-label='收起收集箱列']").trigger("click");
+    await wrapper.get("[aria-label='搜索任务']").setValue("无匹配");
+    await openTaskListener.value?.({ payload: "task-1" });
+    await flushPromises();
+    expect(wrapper.get("[data-column='todo']").classes()).not.toContain("board-column--collapsed");
+    expect(wrapper.find("[data-task-id='task-1']").exists()).toBe(true);
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: "nearest", inline: "nearest" });
+    expect(document.activeElement).toBe(wrapper.get("[data-inspector-title]").element);
+    wrapper.unmount();
+  });
+
+  it("locks collapse controls during drag and keeps hidden tasks when saving a move", async () => {
+    const tasks = wall();
+    tasks[1]!.tasks = [{ ...existingTask, id: "hidden", columnId: "backlog" }];
+    repository.loadTaskWall.mockResolvedValue(tasks);
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+    await wrapper.get("[aria-label='收起待办池列']").trigger("click");
+    const source = wrapper.getComponent("[data-column='todo']").findComponent(VueDraggable);
+    const target = wrapper.getComponent("[data-column='doing']").findComponent(VueDraggable);
+    const card = wrapper.get("[data-task-id='task-1']").element;
+    source.vm.$emit("start", { item: card, oldDraggableIndex: 0 });
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get("[aria-label='展开待办池列']").attributes("disabled")).toBeDefined();
+    expect(wrapper.get("[aria-label='收起进行中列']").attributes("disabled")).toBeDefined();
+    await wrapper.get("[aria-label='收起进行中列']").trigger("click");
+    expect(wrapper.get("[data-column='doing']").classes()).not.toContain("board-column--collapsed");
+    source.vm.$emit("update:modelValue", []);
+    target.vm.$emit("update:modelValue", [{ ...existingTask }]);
+    await wrapper.vm.$nextTick();
+    await wrapper.get("[data-column='doing'] .board-column__tasks").trigger("drop");
+    source.vm.$emit("end", { item: card, originalEvent: { clientX: 600, clientY: 240 } });
+    await flushPromises();
+    const saved = repository.saveTaskOrder.mock.calls[0]![0] as TaskColumn[];
+    expect(saved[1]!.tasks.map((task) => task.id)).toEqual(["hidden"]);
+    expect(saved[3]!.tasks.map((task) => task.id)).toEqual(["task-1"]);
+    await wrapper.get("[aria-label='展开待办池列']").trigger("click");
+    expect(wrapper.find("[data-task-id='hidden']").exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it.each(["dragenter", "dragover", "mousemove", "touchmove"])("automatically opens a collapsed target on %s and preserves its tasks on drop", async (eventType) => {
+    const tasks = wall();
+    const hidden = { ...existingTask, id: "hidden", columnId: "doing" };
+    tasks[3]!.tasks = [hidden];
+    const unrelated = { ...existingTask, id: "unrelated", columnId: "backlog" };
+    tasks[1]!.tasks = [unrelated];
+    repository.loadTaskWall.mockResolvedValue(tasks);
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+    await wrapper.get("[aria-label='收起进行中列']").trigger("click");
+    const source = wrapper.getComponent("[data-column='todo']").findComponent(VueDraggable);
+    const card = wrapper.get("[data-task-id='task-1']").element;
+    const collapsed = wrapper.get("[data-column='doing']");
+    vi.mocked(document.elementFromPoint).mockReturnValue(collapsed.get(".board-column__toggle").element);
+    // Ordinary pointer movement and foreign dragovers must not expand the column.
+    window.dispatchEvent(new MouseEvent(eventType, { clientX: 700, clientY: 250 }));
+    await wrapper.vm.$nextTick();
+    expect(collapsed.classes()).toContain("board-column--collapsed");
+    source.vm.$emit("start", { item: card, oldDraggableIndex: 0 });
+    await wrapper.vm.$nextTick();
+    const move = new MouseEvent(eventType, { clientX: 700, clientY: 250, bubbles: true, cancelable: true });
+    if (eventType === "touchmove") Object.defineProperty(move, "touches", { value: [{ clientX: 700, clientY: 250 }] });
+    window.dispatchEvent(move);
+    await wrapper.vm.$nextTick();
+    expect(collapsed.classes()).not.toContain("board-column--collapsed");
+    expect(collapsed.find("[data-task-id='hidden']").exists()).toBe(true);
+    expect(repository.saveTaskOrder).not.toHaveBeenCalled();
+    expect(repository.updateTask).not.toHaveBeenCalled();
+    const target = wrapper.getComponent("[data-column='doing']").findComponent(VueDraggable);
+    source.vm.$emit("update:modelValue", []);
+    target.vm.$emit("update:modelValue", [hidden, { ...existingTask }]);
+    await wrapper.vm.$nextTick();
+    await wrapper.get("[data-column='doing'] .board-column__tasks").trigger("drop");
+    source.vm.$emit("end", { item: card, originalEvent: { clientX: 700, clientY: 250 } });
+    await flushPromises();
+    const saved = repository.saveTaskOrder.mock.calls[0]![0] as TaskColumn[];
+    expect(saved[0]!.tasks).toHaveLength(0);
+    expect(saved[3]!.tasks.map((task) => task.id)).toEqual(["hidden", "task-1"]);
+    expect(saved[1]!.tasks.map((task) => task.id)).toEqual(["unrelated"]);
+    expect(collapsed.classes()).toContain("board-column--collapsed");
+    expect(JSON.parse(localStorage.getItem("kanboard.collapsed-columns.v1")!)).toEqual(["done", "doing"]);
+    wrapper.unmount();
+  });
+
+  it("lands a quick release in the auto-expanded column instead of the last Sortable list", async () => {
+    const tasks = wall();
+    tasks[3]!.tasks = [{ ...existingTask, id: "hidden", columnId: "doing" }];
+    repository.loadTaskWall.mockResolvedValue(tasks);
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+    await wrapper.get("[aria-label='收起进行中列']").trigger("click");
+    const source = wrapper.getComponent("[data-column='todo']").findComponent(VueDraggable);
+    const intermediate = wrapper.getComponent("[data-column='ready']").findComponent(VueDraggable);
+    const card = wrapper.get("[data-task-id='task-1']").element;
+    source.vm.$emit("start", { item: card, oldDraggableIndex: 0 });
+    source.vm.$emit("update:modelValue", []);
+    intermediate.vm.$emit("update:modelValue", [{ ...existingTask }]);
+    vi.mocked(document.elementFromPoint).mockReturnValue(wrapper.get("[data-column='doing']").element);
+    window.dispatchEvent(new MouseEvent("dragenter", { clientX: 700, clientY: 250 }));
+    await wrapper.vm.$nextTick();
+    // No Sortable update:modelValue or dragover has reached the new target yet.
+    await wrapper.get("[data-column='doing'] .board-column__tasks").trigger("drop");
+    source.vm.$emit("end", { item: card, originalEvent: { clientX: 700, clientY: 250 } });
+    await flushPromises();
+    expect(repository.saveTaskOrder).toHaveBeenCalledTimes(1);
+    const saved = repository.saveTaskOrder.mock.calls[0]![0] as TaskColumn[];
+    expect(saved[2]!.tasks).toHaveLength(0);
+    expect(saved[3]!.tasks.map((task) => task.id)).toEqual(["hidden", "task-1"]);
+    wrapper.unmount();
+  });
+
+  it.each(["p1", "p2"])("respects swimlane drag groups when released over an auto-opened column in %s", async (targetProject) => {
+    repository.loadProjects.mockResolvedValue([
+      { id: "p1", name: "项目一", color: "#285a78", description: "", path: "", targetDate: null, status: "active" },
+      { id: "p2", name: "项目二", color: "#285a78", description: "", path: "", targetDate: null, status: "active" },
+    ]);
+    const tasks = wall();
+    tasks[0]!.tasks = [{ ...existingTask, projectId: "p1" }];
+    tasks[3]!.tasks = [{ ...existingTask, id: "other-project", projectId: "p2", columnId: "doing" }];
+    repository.loadTaskWall.mockResolvedValue(tasks);
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+    await wrapper.get("[aria-label='收起进行中列']").trigger("click");
+    await wrapper.get("[data-tour='swimlane']").trigger("click");
+    const source = wrapper.getComponent(".swimlane-row[data-project-id='p1'] [data-column='todo']").findComponent(VueDraggable);
+    const card = wrapper.get("[data-task-id='task-1']").element;
+    const target = wrapper.get(`.swimlane-row[data-project-id='${targetProject}'] [data-column='doing']`);
+    source.vm.$emit("start", { item: card, oldDraggableIndex: 0 });
+    vi.mocked(document.elementFromPoint).mockReturnValue(target.element);
+    window.dispatchEvent(new MouseEvent("dragenter", { clientX: 700, clientY: 250 }));
+    await wrapper.vm.$nextTick();
+    expect(wrapper.findAll("[data-column='doing'].board-column--collapsed")).toHaveLength(0);
+    await target.get(".board-column__tasks").trigger("drop");
+    source.vm.$emit("end", { item: card, originalEvent: { clientX: 700, clientY: 250 } });
+    await flushPromises();
+    const saved = repository.saveTaskOrder.mock.calls[0]![0] as TaskColumn[];
+    expect(saved[0]!.tasks.map((task) => task.id)).toEqual(targetProject === "p1" ? [] : ["task-1"]);
+    expect(saved[3]!.tasks.map((task) => task.id)).toEqual(targetProject === "p1" ? ["other-project", "task-1"] : ["other-project"]);
+    expect(saved[3]!.tasks[0]!.projectId).toBe("p2");
+    wrapper.unmount();
+  });
+
+  it("restores automatically opened columns when a drag is cancelled without saving preferences", async () => {
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+    await wrapper.get("[aria-label='收起进行中列']").trigger("click");
+    const preferenceBeforeDrag = localStorage.getItem("kanboard.collapsed-columns.v1");
+    const source = wrapper.getComponent("[data-column='todo']").findComponent(VueDraggable);
+    const card = wrapper.get("[data-task-id='task-1']").element;
+    const target = wrapper.get("[data-column='doing']");
+    vi.mocked(document.elementFromPoint).mockReturnValue(target.element);
+    source.vm.$emit("start", { item: card, oldDraggableIndex: 0 });
+    window.dispatchEvent(new MouseEvent("dragover", { clientX: 700, clientY: 250 }));
+    await wrapper.vm.$nextTick();
+    expect(target.classes()).not.toContain("board-column--collapsed");
+    source.vm.$emit("end", { item: card, originalEvent: { clientX: -100, clientY: -100 } });
+    await flushPromises();
+    expect(target.classes()).toContain("board-column--collapsed");
+    expect(wrapper.find("[data-column='todo'] [data-task-id='task-1']").exists()).toBe(true);
+    expect(localStorage.getItem("kanboard.collapsed-columns.v1")).toBe(preferenceBeforeDrag);
+    expect(repository.saveTaskOrder).not.toHaveBeenCalled();
+    expect(repository.updateTask).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it.each([false, true])("restores the default done fold after dropping into it, including save failure: %s", async (failSave) => {
+    repository.loadTaskWall.mockResolvedValueOnce(wall()).mockResolvedValue(wall());
+    if (failSave) repository.saveTaskOrder.mockRejectedValueOnce(new Error("保存失败"));
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+    const source = wrapper.getComponent("[data-column='todo']").findComponent(VueDraggable);
+    const card = wrapper.get("[data-task-id='task-1']").element;
+    vi.mocked(document.elementFromPoint).mockReturnValue(wrapper.get("[data-column='done']").element);
+    source.vm.$emit("start", { item: card, oldDraggableIndex: 0 });
+    window.dispatchEvent(new MouseEvent("dragenter", { clientX: 900, clientY: 250 }));
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get("[data-column='done']").classes()).not.toContain("board-column--collapsed");
+    await wrapper.get("[data-column='done'] .board-column__tasks").trigger("drop");
+    source.vm.$emit("end", { item: card, originalEvent: { clientX: 900, clientY: 250 } });
+    await flushPromises();
+    expect(wrapper.get("[data-column='done']").classes()).toContain("board-column--collapsed");
+    expect(wrapper.get("[data-column='backlog']").classes()).not.toContain("board-column--collapsed");
+    expect(localStorage.getItem("kanboard.collapsed-columns.v1")).toBeNull();
+    await wrapper.get("[aria-label='展开已完成列']").trigger("click");
+    expect(wrapper.find("[data-column='done'] [data-task-id='task-1']").exists()).toBe(!failSave);
+    expect(wrapper.find("[data-column='todo'] [data-task-id='task-1']").exists()).toBe(failSave);
+    wrapper.unmount();
+  });
+
+  it("does not open a collapsed column underneath the drag trash", async () => {
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+    stubTrashZone(wrapper);
+    await wrapper.get("[aria-label='收起进行中列']").trigger("click");
+    vi.mocked(document.elementFromPoint).mockReturnValue(wrapper.get("[data-column='doing']").element);
+    const source = wrapper.getComponent("[data-column='todo']").findComponent(VueDraggable);
+    const card = wrapper.get("[data-task-id='task-1']").element;
+    source.vm.$emit("start", { item: card, oldDraggableIndex: 0 });
+    window.dispatchEvent(new MouseEvent("dragover", { clientX: 600, clientY: 428 }));
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get("[data-column='doing']").classes()).toContain("board-column--collapsed");
+    expect(document.elementFromPoint).not.toHaveBeenCalled();
+    source.vm.$emit("end", { item: card, originalEvent: { clientX: 600, clientY: 428 } });
+    await flushPromises();
+    expect(repository.trashTask).toHaveBeenCalledWith("task-1");
+    expect(repository.saveTaskOrder).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("skips collapsed columns when navigating tasks with the keyboard", async () => {
+    const tasks = wall();
+    tasks[3]!.tasks = [{ ...existingTask, id: "active-task", columnId: "doing", title: "进行中的任务" }];
+    repository.loadTaskWall.mockResolvedValue(tasks);
+    const wrapper = mount(App, { attachTo: document.body });
+    await flushPromises();
+    await wrapper.get("[aria-label='收起收集箱列']").trigger("click");
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    await flushPromises();
+    expect((wrapper.get("[data-inspector-title]").element as HTMLInputElement).value).toBe("进行中的任务");
+    expect(wrapper.get("[data-column='todo']").classes()).toContain("board-column--collapsed");
+    wrapper.unmount();
+  });
+
   it("adds a task from the header and selects it", async () => {
     repository.createTask.mockResolvedValue({
       ...existingTask,
@@ -144,12 +533,14 @@ describe("personal task wall", () => {
     const wrapper = mount(App, { attachTo: document.body });
     await flushPromises();
 
+    await wrapper.get("[aria-label='收起收集箱列']").trigger("click");
     await wrapper.get("[aria-label='新任务标题']").setValue("准备每周回顾");
     await wrapper.get(".quick-add").trigger("submit");
     await flushPromises();
 
     expect(repository.createTask).toHaveBeenCalledWith("准备每周回顾", "todo", null);
     expect(wrapper.text()).toContain("准备每周回顾");
+    expect(wrapper.get("[data-column='todo']").classes()).not.toContain("board-column--collapsed");
     expect(wrapper.text()).toContain("任务详情");
     expect(document.activeElement).toBe(wrapper.get("[data-inspector-description]").element);
     expect(wrapper.find("select").exists()).toBe(false);
@@ -217,6 +608,19 @@ describe("personal task wall", () => {
     expect(shortcut.defaultPrevented).toBe(false);
     await wrapper.get("[data-task-id='task-1']").trigger("click");
     expect(wrapper.find(".task-inspector__save .secondary-button").exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("closes statistics with Escape while preserving the inspector behind it", async () => {
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.get("[data-task-id='task-1']").trigger("click");
+    await wrapper.get("[data-tour='flow-dashboard']").trigger("click");
+    expect(wrapper.find(".flow-dashboard").exists()).toBe(true);
+    await wrapper.get(".flow-dashboard").trigger("keydown", { key: "Escape" });
+    await flushPromises();
+    expect(wrapper.find(".flow-dashboard").exists()).toBe(false);
+    expect(wrapper.find(".task-inspector").exists()).toBe(true);
     wrapper.unmount();
   });
 
@@ -348,6 +752,8 @@ describe("personal task wall", () => {
       "task-1",
       expect.objectContaining({ columnId: "done" }),
     );
+    expect(wrapper.get("[data-column='done']").classes()).toContain("board-column--collapsed");
+    await wrapper.get("[aria-label='展开已完成列']").trigger("click");
     expect(wrapper.find("[aria-label='恢复任务：整理个人任务']").exists()).toBe(true);
   });
 
@@ -663,6 +1069,7 @@ describe("personal task wall", () => {
     await flushPromises();
 
     // The done column cards should show task-1 first (at top) and task-old-done second
+    await wrapper.get("[aria-label='展开已完成列']").trigger("click");
     const doneColumn = wrapper.find(".board-column--done");
     const cards = doneColumn.findAll(".task-card");
     expect(cards[0].text()).toContain("整理个人任务");
@@ -670,34 +1077,41 @@ describe("personal task wall", () => {
     wrapper.unmount();
   });
 
-  it("enters mock onboarding mode on clicking guide button and restores on exit", async () => {
-    repository.loadTaskWall.mockResolvedValue(wall());
-    const wrapper = mount(App, { attachTo: document.body });
+  it("updates column WIP limit via column header inline edit and persists it", async () => {
+    repository.updateColumnWipLimit.mockResolvedValue(undefined);
+    const wrapper = mount(App);
     await flushPromises();
 
-    expect(wrapper.find(".onboarding-banner").exists()).toBe(false);
+    const doingCol = wrapper.findComponent({ name: "BoardColumn" });
+    const allBoardCols = wrapper.findAllComponents({ name: "BoardColumn" });
+    const doingWrapper = allBoardCols.find((col) => col.props("column").id === "doing");
+    expect(doingWrapper).toBeDefined();
 
-    // Click guide button
-    const guideButton = wrapper.get("[data-tour='guide-help']");
-    await guideButton.trigger("click");
+    await doingWrapper!.vm.$emit("updateWipLimit", "doing", 5);
     await flushPromises();
 
-    expect(repository.setMockMode).toHaveBeenCalledWith(true);
-    expect(onboardingMock.startOnboarding).toHaveBeenCalled();
-    expect(wrapper.find(".onboarding-banner").exists()).toBe(true);
+    expect(repository.updateColumnWipLimit).toHaveBeenCalledWith("doing", 5);
+    expect(doingWrapper!.props("column").wipLimit).toBe(5);
+    expect(wrapper.text()).toContain("进行中上限已更新为 5 项");
+    wrapper.unmount();
+  });
 
-    // Verify exit callback restores real tasks
-    const opts = onboardingMock.startOnboarding.mock.calls[0]?.[0];
-    expect(opts?.onExit).toBeTypeOf("function");
-
-    // Exit flow
-    await opts.onExit();
+  it("syncs column WIP limits updated from SettingsPanel", async () => {
+    const wrapper = mount(App);
     await flushPromises();
 
-    expect(repository.setMockMode).toHaveBeenCalledWith(false);
-    expect(onboardingMock.stopOnboarding).toHaveBeenCalled();
-    expect(wrapper.find(".onboarding-banner").exists()).toBe(false);
+    const settingsPanel = wrapper.findComponent({ name: "SettingsPanel" });
+    expect(settingsPanel.exists()).toBe(true);
 
+    await settingsPanel.vm.$emit("updateWipLimits", { doing: 6, verify: 4 });
+    await flushPromises();
+
+    const allBoardCols = wrapper.findAllComponents({ name: "BoardColumn" });
+    const doingCol = allBoardCols.find((col) => col.props("column").id === "doing");
+    const verifyCol = allBoardCols.find((col) => col.props("column").id === "verify");
+
+    expect(doingCol?.props("column").wipLimit).toBe(6);
+    expect(verifyCol?.props("column").wipLimit).toBe(4);
     wrapper.unmount();
   });
 });

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import { Trash2 } from "lucide-vue-next";
 import type { DeletedTask } from "../types";
 
 defineProps<{ tasks: DeletedTask[]; busy: boolean }>();
@@ -32,9 +33,7 @@ function deletedLabel(value: string) {
     </header>
 
     <div v-if="!tasks.length" class="task-trash-view__empty">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M5 7h14M9 4h6M7 7l.7 13h8.6L17 7M10 10v6M14 10v6" />
-      </svg>
+      <Trash2 :size="34" aria-hidden="true" stroke-width="1.25" />
       <strong>回收站是空的</strong>
       <span>删除的任务会保留在这里。</span>
     </div>

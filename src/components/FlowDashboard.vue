@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import SurfaceMotion from "./SurfaceMotion.vue";
 import { computed } from "vue";
+import { X } from "lucide-vue-next";
 import type { FlowMetrics } from "../types";
 
 const props = defineProps<{ open: boolean; metrics: FlowMetrics }>();
@@ -32,11 +34,12 @@ function hours(value: number | null) {
 </script>
 
 <template>
+  <SurfaceMotion kind="dialog" panel=".flow-dashboard">
   <div v-if="open" class="dashboard-layer" @click.self="emit('close')">
-    <section class="flow-dashboard" role="dialog" aria-modal="true" aria-label="流动统计">
+    <section class="flow-dashboard" role="dialog" aria-modal="true" aria-label="流动统计" @keydown.esc.stop="emit('close')">
       <header>
         <div><span>FLOW METRICS</span><h2>流动统计</h2></div>
-        <button class="icon-button" type="button" aria-label="关闭统计" @click="emit('close')"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" /></svg></button>
+        <button class="icon-button" type="button" aria-label="关闭统计" @click="emit('close')"><X :size="18" aria-hidden="true" /></button>
       </header>
       <div class="metric-grid">
         <article><span>过去 7 天完成</span><strong>{{ metrics.throughput7d }}</strong><small>项任务</small></article>
@@ -70,4 +73,5 @@ function hours(value: number | null) {
       </div>
     </section>
   </div>
+  </SurfaceMotion>
 </template>

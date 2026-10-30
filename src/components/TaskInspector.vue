@@ -1,10 +1,13 @@
 <script setup lang="ts">
+import SurfaceMotion from "./SurfaceMotion.vue";
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import DateInput from "./DateInput.vue";
 import MarkdownEditor from "./MarkdownEditor.vue";
 import TagInput from "./TagInput.vue";
 import TaskChecklist from "./TaskChecklist.vue";
 import TaskSelect from "./TaskSelect.vue";
+import TaskDescriptionHistory from "./TaskDescriptionHistory.vue";
+import { History, X } from "lucide-vue-next";
 import type { BlockedReason, Project, Tag, Task, TaskChanges, TaskColumn } from "../types";
 
 const props = defineProps<{
@@ -25,6 +28,7 @@ const TABS = ["details", "checklist", "verification"] as const;
 type TabType = typeof TABS[number];
 
 const confirmingDelete = ref(false);
+const historyOpen = ref(false);
 const activeTab = ref<TabType>("details");
 const fullscreenTarget = ref<"description" | "verification" | null>(null);
 
@@ -156,6 +160,7 @@ watch(
     confirmingDelete.value = false;
     const isDifferentTask = !previousTask || task.id !== previousTask.id;
     if (isDifferentTask) {
+      historyOpen.value = false;
       hasDescriptionConflict.value = false;
       externalDescription.value = "";
       hasReviewNotesConflict.value = false;
@@ -195,6 +200,10 @@ watch(
     if (!base) return;
 
     // Description:
+    if (task.description === draft.description) {
+      base.description = task.description;
+      hasDescriptionConflict.value = false;
+    }
     const descDirty = draft.description !== base.description;
     if (!descDirty) {
       draft.description = task.description;
@@ -283,9 +292,11 @@ watch(
 
 function submit() {
   if (!draft.title.trim()) return;
+  const descriptionBase = baseSnapshot.value?.description ?? props.task.description;
   if (baseSnapshot.value) {
     baseSnapshot.value = {
       ...draft,
+      description: descriptionBase,
       tagNames: [...draft.tagNames],
       checklist: draft.checklist.map((item) => ({ ...item })),
     };
@@ -294,6 +305,8 @@ function submit() {
   hasReviewNotesConflict.value = false;
   emit("save", props.task.id, {
     ...draft,
+    descriptionBase,
+
     title: draft.title.trim(),
     dueDate: draft.dueDate || null,
   });
@@ -350,12 +363,14 @@ async function handleTabKeydown(event: KeyboardEvent) {
           <strong>任务详情</strong>
           <span>{{ columns.find((column) => column.id === draft.columnId)?.title }}</span>
         </div>
-        <button class="icon-button" type="button" aria-label="关闭任务详情" @click="emit('close')"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" /></svg></button>
+        <button class="icon-button" type="button" aria-label="关闭任务详情" @click="emit('close')">
+          <X :size="18" aria-hidden="true" />
+        </button>
       </header>
 
       <label class="field field--title">
         <span>任务标题</span>
-        <textarea data-inspector-title v-model="draft.title" rows="3" maxlength="160" />
+        <textarea data-inspector-title v-model="draft.title" rows="2" maxlength="160" />
       </label>
 
       <div class="task-inspector__tabs" role="tablist" aria-label="任务编辑内容" @keydown="handleTabKeydown">
@@ -448,8 +463,9 @@ async function handleTabKeydown(event: KeyboardEvent) {
         </div>
 
         <div class="field field--description">
-          <div class="field-header">
+          <div class="field-header description-label-row">
             <span>任务说明</span>
+            <button class="icon-button description-history-trigger" type="button" title="Agent 修改记录" aria-label="查看 Agent 修改记录" aria-haspopup="dialog" @click="historyOpen = true"><History :size="16" aria-hidden="true" /></button>
           </div>
 
           <div v-if="hasDescriptionConflict" class="conflict-banner" role="alert">
@@ -510,20 +526,7 @@ async function handleTabKeydown(event: KeyboardEvent) {
           <MarkdownEditor
             v-model="draft.reviewNotes"
             label="验证方案"
-            placeholder="请使用结构化 Markdown 编写验证方案（优先使用表格、清单与代码块分项呈现，避免单行堆砌）：
-
-### 1. 核心改动与实现方案
-| 模块 / 文件 | 改动说明 |
-| :--- | :--- |
-| `src/...` | 描述... |
-
-### 2. 交付成果
-- [x] 完成项 1...
-
-### 3. 测试与验证指南
-| 验证项 | 测试命令 / 操作步骤 | 预期效果 |
-| :--- | :--- | :--- |
-| 自动化单测 | `npm test` | 通过全部测试 |"
+            placeholder="按任务需要编写 Markdown 验收方案：说明交付结果、如何核对、实际验证结果及未验证项。可使用简短段落，按需添加列表、表格或截图，无须固定章节。"
             :task-title="draft.title"
             :data-inspector-review-notes="true"
             height="100%"
@@ -551,6 +554,12 @@ async function handleTabKeydown(event: KeyboardEvent) {
 
     <!-- 任务说明与验证方案统一全屏沉浸弹层 -->
     <Teleport to="body">
+      <SurfaceMotion kind="dialog" panel=".description-history">
+        <TaskDescriptionHistory v-if="historyOpen" :task-id="task.id" :updated-at="task.updatedAt" @close="historyOpen = false" />
+      </SurfaceMotion>
+    </Teleport>
+    <Teleport to="body">
+      <SurfaceMotion kind="dialog">
       <div
         v-if="fullscreenTarget"
         class="markdown-fullscreen-modal"
@@ -602,6 +611,7 @@ async function handleTabKeydown(event: KeyboardEvent) {
           />
         </main>
       </div>
+          </SurfaceMotion>
     </Teleport>
   </aside>
 </template>

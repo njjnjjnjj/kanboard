@@ -1,4 +1,4 @@
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
 import type { Task, TaskColumn } from "../types";
 import TaskInspector from "./TaskInspector.vue";
@@ -34,6 +34,31 @@ const columns: TaskColumn[] = [
 ];
 
 describe("TaskInspector verification tab", () => {
+  it("opens history with an icon and preserves manual edits without asking for a summary", async () => {
+    const wrapper = mount(TaskInspector, {
+      props: { task: { ...mockTask, columnId: "doing" }, columns, projects: [], tags: [], saving: false },
+      global: { stubs: { Teleport: true, TaskDescriptionHistory: { template: '<div class="history-stub">历史</div>' } } },
+    });
+    await wrapper.get("[data-inspector-description]").setValue("# 完整需求\n\n[说明](/D:/项目/说明.md)");
+    expect(wrapper.find("[aria-label='任务说明修改摘要']").exists()).toBe(false);
+    const entry = wrapper.get("[aria-label='查看 Agent 修改记录']");
+    expect(entry.text()).toBe("");
+    expect(entry.find("svg").exists()).toBe(true);
+    expect(entry.element.parentElement?.classList.contains("description-label-row")).toBe(true);
+    await wrapper.get("[aria-label='查看 Agent 修改记录']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find(".history-stub").exists()).toBe(true);
+    expect((wrapper.get("[data-inspector-description]").element as HTMLTextAreaElement).value).toContain("完整需求");
+    await wrapper.get("form").trigger("submit");
+    expect(wrapper.emitted("save")?.[0]?.[1]).toMatchObject({
+      description: "# 完整需求\n\n[说明](/D:/项目/说明.md)", descriptionBase: mockTask.description,
+    });
+    // Repeated submission before a successful save must retain the original base.
+    await wrapper.get("form").trigger("submit");
+    expect(wrapper.emitted("save")?.[1]?.[1]).toMatchObject({ descriptionBase: mockTask.description });
+    wrapper.unmount();
+  });
+
   it("does not expose or submit an editable agent marker", async () => {
     const wrapper = mount(TaskInspector, {
       props: { task: { ...mockTask, columnId: "doing", inAgentSop: true }, columns, projects: [], tags: [], saving: false },
@@ -292,6 +317,25 @@ describe("TaskInspector verification tab", () => {
     expect(wrapper.find(".task-inspector__header span").text()).toBe("待验证");
     // Description remains intact
     expect((textarea.element as HTMLTextAreaElement).value).toBe("正在开发中记录的笔记");
+    wrapper.unmount();
+  });
+
+  it("renders compact title input and structured form layout for vertical space efficiency", () => {
+    const wrapper = mount(TaskInspector, {
+      props: {
+        task: mockTask,
+        columns,
+        projects: [],
+        tags: [],
+        saving: false,
+      },
+    });
+
+    const titleTextarea = wrapper.find("textarea[data-inspector-title]");
+    expect(titleTextarea.exists()).toBe(true);
+    expect(titleTextarea.attributes("rows")).toBe("2");
+    expect(wrapper.find(".task-inspector__panel--details").exists()).toBe(true);
+    expect(wrapper.find(".field--description").exists()).toBe(true);
     wrapper.unmount();
   });
 });

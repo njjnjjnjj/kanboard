@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { CircleDashed, Ellipsis, Hash, ListTodo, Plus, Trash2 } from "lucide-vue-next";
 import type { Project, Tag, Task, TaskScope } from "../types";
 import TagActions from "./TagActions.vue";
 
@@ -50,7 +51,7 @@ function tagUsageCount(tagId: string) {
         type="button"
         @click="emit('select', { kind: 'all' })"
       >
-        <span class="workspace-nav__all-mark" aria-hidden="true" />
+        <ListTodo class="workspace-nav__icon" :size="15" aria-hidden="true" />
         <span>全部任务</span>
         <small>{{ tasks.filter((task) => task.columnId !== 'done').length }}</small>
       </button>
@@ -60,7 +61,7 @@ function tagUsageCount(tagId: string) {
         type="button"
         @click="emit('select', { kind: 'unassigned' })"
       >
-        <span class="workspace-nav__empty-mark" aria-hidden="true">—</span>
+        <CircleDashed class="workspace-nav__icon" :size="15" aria-hidden="true" />
         <span>无项目</span>
         <small>{{ taskCount(null) }}</small>
       </button>
@@ -70,9 +71,7 @@ function tagUsageCount(tagId: string) {
         type="button"
         @click="emit('select', { kind: 'trash' })"
       >
-        <svg viewBox="0 0 18 18" aria-hidden="true">
-          <path d="M3.5 5h11M7 3.5h4M5.7 5l.5 9.5h5.6l.5-9.5M7.6 7.5v4.3M10.4 7.5v4.3" />
-        </svg>
+        <Trash2 class="workspace-nav__icon" :size="15" aria-hidden="true" />
         <span>回收站</span>
         <small>{{ trashCount }}</small>
       </button>
@@ -81,7 +80,9 @@ function tagUsageCount(tagId: string) {
     <section class="workspace-nav__section" aria-labelledby="projects-heading">
       <header>
         <h2 id="projects-heading">项目</h2>
-        <button type="button" aria-label="新建项目" @click="emit('createProject')">＋</button>
+        <button type="button" aria-label="新建项目" @click="emit('createProject')">
+          <Plus :size="14" aria-hidden="true" />
+        </button>
       </header>
       <div v-if="!activeProjects.length" class="workspace-nav__empty">还没有项目</div>
       <div v-for="project in activeProjects" :key="project.id" class="workspace-nav__item">
@@ -101,7 +102,7 @@ function tagUsageCount(tagId: string) {
           :aria-label="`编辑项目：${project.name}`"
           @click="emit('editProject', project)"
         >
-          ···
+          <Ellipsis :size="15" aria-hidden="true" />
         </button>
       </div>
       <details v-if="archivedProjects.length" class="workspace-nav__archived">
@@ -123,7 +124,7 @@ function tagUsageCount(tagId: string) {
             :aria-label="`编辑项目：${project.name}`"
             @click="emit('editProject', project)"
           >
-            ···
+            <Ellipsis :size="15" aria-hidden="true" />
           </button>
         </div>
       </details>
@@ -142,7 +143,7 @@ function tagUsageCount(tagId: string) {
           type="button"
           @click="emit('select', { kind: 'tag', id: tag.id })"
         >
-          <span class="workspace-nav__tag-mark" aria-hidden="true">#</span>
+          <Hash class="workspace-nav__icon workspace-nav__tag-mark" :size="14" aria-hidden="true" />
           <span>{{ tag.name }}</span>
           <small>{{ tagCount(tag.id) }}</small>
         </button>

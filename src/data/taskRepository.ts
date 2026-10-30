@@ -1,12 +1,5 @@
 import Database from "@tauri-apps/plugin-sql";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  createMockColumns,
-  createMockProjects,
-  createMockTags,
-  createMockTaskEvents,
-} from "../onboardingMockData";
-import { notifyOnboardingTaskDropped } from "../onboarding";
 import type {
   DeletedTask,
   Project,
@@ -17,34 +10,6 @@ import type {
   TaskColumn,
   TaskEvent,
 } from "../types";
-
-let mockMode = false;
-let mockState: {
-  columns: TaskColumn[];
-  projects: Project[];
-  tags: Tag[];
-  taskEvents: TaskEvent[];
-  deletedTasks: DeletedTask[];
-} | null = null;
-
-export function setMockMode(active: boolean) {
-  mockMode = active;
-  if (active) {
-    mockState = {
-      columns: createMockColumns(),
-      projects: createMockProjects(),
-      tags: createMockTags(),
-      taskEvents: createMockTaskEvents(),
-      deletedTasks: [],
-    };
-  } else {
-    mockState = null;
-  }
-}
-
-export function isMockMode(): boolean {
-  return mockMode;
-}
 
 let databasePromise: Promise<Database> | undefined;
 
@@ -111,9 +76,6 @@ export function sortDoneTasks<T extends Task>(tasks: T[]): T[] {
 }
 
 export async function loadTaskWall(): Promise<TaskColumn[]> {
-  if (mockMode && mockState) {
-    return JSON.parse(JSON.stringify(mockState.columns));
-  }
   const db = await database();
   const [columns, taskRows, taskTags, checklistRows] = await Promise.all([
     db.select<ColumnRow[]>(
@@ -187,9 +149,6 @@ export async function loadTaskWall(): Promise<TaskColumn[]> {
 }
 
 export async function loadDeletedTasks(): Promise<DeletedTask[]> {
-  if (mockMode && mockState) {
-    return JSON.parse(JSON.stringify(mockState.deletedTasks));
-  }
   const db = await database();
   const [taskRows, taskTags, checklistRows] = await Promise.all([
     db.select<DeletedTaskRow[]>(
@@ -256,38 +215,6 @@ export async function createTask(
   columnId: string,
   projectId: string | null = null,
 ): Promise<Task> {
-  if (mockMode && mockState) {
-    const proj = mockState.projects.find((p) => p.id === projectId) ?? null;
-    const nowIso = new Date().toISOString();
-    const task: Task = {
-      id: `mock-task-${Date.now()}`,
-      columnId,
-      projectId,
-      project: proj ? { id: proj.id, name: proj.name, color: proj.color, path: proj.path } : null,
-      tags: [],
-      title,
-      description: "",
-      dueDate: null,
-      priority: "none",
-      position: 1000,
-      completedAt: null,
-      startedAt: columnId === "doing" ? nowIso : null,
-      blockedReason: null,
-      blockedSince: null,
-      checklist: [],
-      recurrenceRule: "none",
-      reviewNotes: "",
-      inAgentSop: false,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    };
-    const col = mockState.columns.find((c) => c.id === columnId);
-    if (col) {
-      task.position = (col.tasks.length + 1) * 1000;
-      col.tasks.push(task);
-    }
-    return task;
-  }
   const db = await database();
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -334,29 +261,11 @@ export async function createTask(
 }
 
 export async function updateTask(id: string, changes: TaskChanges): Promise<Tag[]> {
-  if (mockMode && mockState) {
-    for (const col of mockState.columns) {
-      const task = col.tasks.find((t) => t.id === id);
-      if (task) {
-        task.title = changes.title;
-        task.description = changes.description;
-        task.dueDate = changes.dueDate;
-        task.priority = changes.priority;
-        task.columnId = changes.columnId;
-        task.projectId = changes.projectId;
-        task.project = changes.projectId
-          ? mockState.projects.find((p) => p.id === changes.projectId) ?? null
-          : null;
-        task.blockedReason = changes.blockedReason;
-        task.checklist = changes.checklist.map((item, index) => ({ ...item, position: (index + 1) * 1000 }));
-        task.recurrenceRule = changes.recurrenceRule;
-        task.reviewNotes = changes.reviewNotes;
-        task.tags = changes.tagNames.map((name) => ({ id: `mock-tag-${name}`, name }));
-        task.updatedAt = new Date().toISOString();
-        return task.tags;
-      }
-    }
-    return [];
+  if (changes.descriptionBase !== undefined && changes.description !== changes.descriptionBase) {
+    await invoke("update_task_description", {
+      taskId: id, description: changes.description,
+      expectedDescription: changes.descriptionBase,
+    });
   }
   const db = await database();
   const now = new Date().toISOString();
@@ -372,31 +281,29 @@ export async function updateTask(id: string, changes: TaskChanges): Promise<Tag[
         SET column_id = $1,
             project_id = $2,
             title = $3,
-            description = $4,
-            due_date = $5,
-            priority = $6,
-            completed_at = CASE WHEN $1 = 'done' THEN COALESCE(completed_at, $7) ELSE NULL END,
+            due_date = $4,
+            priority = $5,
+            completed_at = CASE WHEN $1 = 'done' THEN COALESCE(completed_at, $6) ELSE NULL END,
             started_at = CASE
-              WHEN $1 = 'doing' AND column_id <> 'doing' THEN $8
+              WHEN $1 = 'doing' AND column_id <> 'doing' THEN $7
               WHEN $1 <> 'doing' THEN NULL
               ELSE started_at
             END,
-            blocked_reason = CASE WHEN $1 = 'blocked' THEN $9 ELSE NULL END,
+            blocked_reason = CASE WHEN $1 = 'blocked' THEN $8 ELSE NULL END,
             blocked_since = CASE
-              WHEN $1 = 'blocked' AND column_id <> 'blocked' THEN $8
+              WHEN $1 = 'blocked' AND column_id <> 'blocked' THEN $7
               WHEN $1 <> 'blocked' THEN NULL
               ELSE blocked_since
             END,
-            recurrence_rule = $10,
-            review_notes = $11,
+            recurrence_rule = $9,
+            review_notes = $10,
             in_agent_sop = CASE WHEN $1 IN ('verify', 'done') THEN 0 ELSE in_agent_sop END,
-            updated_at = $8
-      WHERE id = $12`,
+            updated_at = $7
+      WHERE id = $11`,
     [
       changes.columnId,
       changes.projectId,
       changes.title,
-      changes.description,
       changes.dueDate,
       changes.priority,
       completedAt,
@@ -445,9 +352,6 @@ export async function updateTask(id: string, changes: TaskChanges): Promise<Tag[
 }
 
 export async function loadProjects(): Promise<Project[]> {
-  if (mockMode && mockState) {
-    return JSON.parse(JSON.stringify(mockState.projects));
-  }
   const db = await database();
   return db.select<Project[]>(
     `SELECT id, name, color, description, path, target_date AS targetDate,
@@ -458,18 +362,11 @@ export async function loadProjects(): Promise<Project[]> {
 }
 
 export async function loadTags(): Promise<Tag[]> {
-  if (mockMode && mockState) {
-    return JSON.parse(JSON.stringify(mockState.tags));
-  }
   const db = await database();
   return db.select<Tag[]>("SELECT id, name FROM tags ORDER BY name COLLATE NOCASE");
 }
 
 export async function deleteTag(id: string): Promise<void> {
-  if (mockMode && mockState) {
-    mockState.tags = mockState.tags.filter((item) => item.id !== id);
-    return;
-  }
   const db = await database();
   await db.execute("DELETE FROM task_tags WHERE tag_id = $1", [id]);
   await db.execute("DELETE FROM tags WHERE id = $1", [id]);
@@ -479,22 +376,6 @@ export async function saveProject(
   changes: ProjectChanges,
   id: string | null = null,
 ): Promise<Project> {
-  if (mockMode && mockState) {
-    const existing = id ? mockState.projects.find((p) => p.id === id) : null;
-    const nowIso = new Date().toISOString();
-    if (existing) {
-      Object.assign(existing, changes, { updatedAt: nowIso });
-      return { ...existing };
-    }
-    const created: Project = {
-      id: id || `mock-proj-${Date.now()}`,
-      ...changes,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    };
-    mockState.projects.push(created);
-    return created;
-  }
   const db = await database();
   const projectId = id ?? crypto.randomUUID();
   const now = new Date().toISOString();
@@ -524,42 +405,6 @@ export async function saveProject(
 
 export async function saveTaskOrder(columns: TaskColumn[]): Promise<void> {
   const updatedAt = new Date().toISOString();
-  if (mockMode && mockState) {
-    mockState.columns = JSON.parse(JSON.stringify(columns));
-    for (const column of columns) {
-      if (column.id === "done") {
-        for (const task of column.tasks) {
-          if (!task.completedAt) {
-            task.completedAt = updatedAt;
-          }
-        }
-        sortDoneTasks(column.tasks);
-      }
-      for (const [index, task] of column.tasks.entries()) {
-        const position = (index + 1) * 1000;
-        const previousColumnId = task.columnId;
-        task.columnId = column.id;
-        task.position = position;
-        task.completedAt = column.id === "done" ? task.completedAt ?? updatedAt : null;
-        task.startedAt = column.id === "doing"
-          ? previousColumnId === "doing" ? task.startedAt : updatedAt
-          : null;
-        task.blockedReason = column.id === "blocked" ? task.blockedReason ?? "other" : null;
-        task.blockedSince = column.id === "blocked"
-          ? previousColumnId === "blocked" ? task.blockedSince : updatedAt
-          : null;
-        if (column.id === "verify" || column.id === "done") {
-          task.inAgentSop = false;
-        }
-        task.updatedAt = updatedAt;
-
-        if (column.id === "doing" && previousColumnId !== "doing") {
-          notifyOnboardingTaskDropped({ taskId: task.id, intoTrash: false, toColumnId: "doing" });
-        }
-      }
-    }
-    return;
-  }
   const db = await database();
 
   for (const column of columns) {
@@ -625,27 +470,11 @@ export async function saveTaskOrder(columns: TaskColumn[]): Promise<void> {
 }
 
 export async function deleteTask(id: string): Promise<void> {
-  if (mockMode && mockState) {
-    mockState.deletedTasks = mockState.deletedTasks.filter((t) => t.id !== id);
-    return;
-  }
   const db = await database();
   await db.execute("DELETE FROM tasks WHERE id = $1", [id]);
 }
 
 export async function trashTask(id: string): Promise<string> {
-  if (mockMode && mockState) {
-    const deletedAt = new Date().toISOString();
-    for (const col of mockState.columns) {
-      const idx = col.tasks.findIndex((t) => t.id === id);
-      if (idx >= 0) {
-        const [task] = col.tasks.splice(idx, 1);
-        if (task) mockState.deletedTasks.unshift({ ...task, deletedAt });
-        return deletedAt;
-      }
-    }
-    return deletedAt;
-  }
   const db = await database();
   const deletedAt = new Date().toISOString();
   await db.execute(
@@ -656,15 +485,6 @@ export async function trashTask(id: string): Promise<string> {
 }
 
 export async function restoreTask(id: string): Promise<void> {
-  if (mockMode && mockState) {
-    const idx = mockState.deletedTasks.findIndex((t) => t.id === id);
-    if (idx >= 0) {
-      const [restored] = mockState.deletedTasks.splice(idx, 1);
-      const col = mockState.columns.find((c) => c.id === (restored?.columnId || "todo"));
-      if (restored && col) col.tasks.push(restored);
-    }
-    return;
-  }
   const db = await database();
   await db.execute(
     "UPDATE tasks SET deleted_at = NULL, updated_at = $1 WHERE id = $2",
@@ -673,9 +493,6 @@ export async function restoreTask(id: string): Promise<void> {
 }
 
 export async function loadTaskEvents(): Promise<TaskEvent[]> {
-  if (mockMode && mockState) {
-    return JSON.parse(JSON.stringify(mockState.taskEvents));
-  }
   const db = await database();
   return db.select<TaskEvent[]>(
     `SELECT events.task_id AS taskId, events.from_status AS fromStatus,
@@ -699,9 +516,6 @@ function nextDueDate(value: string | null, rule: Task["recurrenceRule"]): string
 }
 
 export async function createRecurringSuccessor(task: Task): Promise<boolean> {
-  if (mockMode && mockState) {
-    return false;
-  }
   if (task.recurrenceRule === "none") return false;
   const db = await database();
   const id = crypto.randomUUID();
@@ -734,3 +548,36 @@ export async function createRecurringSuccessor(task: Task): Promise<boolean> {
   }
   return true;
 }
+
+export interface ColumnSummary {
+  id: string;
+  title: string;
+  position: number;
+  wipLimit: number | null;
+}
+
+export async function loadColumns(): Promise<ColumnSummary[]> {
+  const db = await database();
+  return db.select<ColumnSummary[]>(
+    "SELECT id, title, position, wip_limit AS wipLimit FROM task_columns ORDER BY position",
+  );
+}
+
+export async function updateColumnWipLimit(id: string, wipLimit: number | null): Promise<void> {
+  const db = await database();
+  await db.execute(
+    "UPDATE task_columns SET wip_limit = $1 WHERE id = $2",
+    [wipLimit, id],
+  );
+}
+
+export async function updateColumnWipLimits(limits: Record<string, number | null>): Promise<void> {
+  const db = await database();
+  for (const [id, wipLimit] of Object.entries(limits)) {
+    await db.execute(
+      "UPDATE task_columns SET wip_limit = $1 WHERE id = $2",
+      [wipLimit, id],
+    );
+  }
+}
+
